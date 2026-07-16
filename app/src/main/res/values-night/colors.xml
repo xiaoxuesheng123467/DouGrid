@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="dougrid_coral">#FF7B77</color>
+    <color name="dougrid_teal">#55C7BC</color>
+    <color name="dougrid_yellow">#FFD86A</color>
+    <color name="dougrid_graphite">#253036</color>
+    <color name="dougrid_surface">#151A1D</color>
+    <color name="dougrid_system_bar_divider">#2FFFFFFF</color>
+    <color name="dougrid_icon_background">#253036</color>
+</resources>

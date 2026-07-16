@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Large user-selected media can be recreated; project data remains eligible. -->
+    <exclude
+        domain="external"
+        path="." />
+</full-backup-content>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/dougrid_icon_background"
+        android:pathData="M54,12A42,42 0,1 0,54 96A42,42 0,1 0,54 12Z" />
+    <path
+        android:fillColor="@color/dougrid_coral"
+        android:pathData="M28.5,34A5.5,5.5 0,1 0,39.5 34A5.5,5.5 0,1 0,28.5 34ZM68.5,34A5.5,5.5 0,1 0,79.5 34A5.5,5.5 0,1 0,68.5 34ZM41.83,47.33A5.5,5.5 0,1 0,52.83 47.33A5.5,5.5 0,1 0,41.83 47.33ZM55.17,47.33A5.5,5.5 0,1 0,66.17 47.33A5.5,5.5 0,1 0,55.17 47.33ZM41.83,60.67A5.5,5.5 0,1 0,52.83 60.67A5.5,5.5 0,1 0,41.83 60.67ZM55.17,60.67A5.5,5.5 0,1 0,66.17 60.67A5.5,5.5 0,1 0,55.17 60.67ZM28.5,74A5.5,5.5 0,1 0,39.5 74A5.5,5.5 0,1 0,28.5 74ZM68.5,74A5.5,5.5 0,1 0,79.5 74A5.5,5.5 0,1 0,68.5 74Z" />
+    <path
+        android:fillColor="@color/dougrid_teal"
+        android:pathData="M41.83,34A5.5,5.5 0,1 0,52.83 34A5.5,5.5 0,1 0,41.83 34ZM28.5,47.33A5.5,5.5 0,1 0,39.5 47.33A5.5,5.5 0,1 0,28.5 47.33ZM68.5,60.67A5.5,5.5 0,1 0,79.5 60.67A5.5,5.5 0,1 0,68.5 60.67ZM55.17,74A5.5,5.5 0,1 0,66.17 74A5.5,5.5 0,1 0,55.17 74Z" />
+    <path
+        android:fillColor="@color/dougrid_yellow"
+        android:pathData="M55.17,34A5.5,5.5 0,1 0,66.17 34A5.5,5.5 0,1 0,55.17 34ZM68.5,47.33A5.5,5.5 0,1 0,79.5 47.33A5.5,5.5 0,1 0,68.5 47.33ZM28.5,60.67A5.5,5.5 0,1 0,39.5 60.67A5.5,5.5 0,1 0,28.5 60.67ZM41.83,74A5.5,5.5 0,1 0,52.83 74A5.5,5.5 0,1 0,41.83 74Z" />
+</vector>
