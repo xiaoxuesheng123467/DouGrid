@@ -15,6 +15,7 @@ import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.BeadTemplate
 import com.qiao.dougrid.data.EditorTool
 import com.qiao.dougrid.data.InventoryEntry
+import com.qiao.dougrid.data.MainDestination
 import com.qiao.dougrid.data.PaletteCatalog
 import com.qiao.dougrid.data.PersistedAppState
 import com.qiao.dougrid.data.ProjectRepository
@@ -43,6 +44,8 @@ data class DouGridUiState(
     val selectedEditorColor: Int = 0,
     val editorTool: EditorTool = EditorTool.PENCIL,
     val openProjectRequestId: String? = null,
+    val materialSummaryRequestProjectId: String? = null,
+    val mainDestination: MainDestination = MainDestination.LIBRARY,
     val message: String? = null,
 )
 
@@ -103,6 +106,16 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(openProjectRequestId = null)
     }
 
+    fun consumeMaterialSummaryRequest(projectId: String) {
+        if (_uiState.value.materialSummaryRequestProjectId == projectId) {
+            _uiState.value = _uiState.value.copy(materialSummaryRequestProjectId = null)
+        }
+    }
+
+    fun selectMainDestination(destination: MainDestination) {
+        _uiState.value = _uiState.value.copy(mainDestination = destination)
+    }
+
     fun createBlank(
         title: String,
         width: Int,
@@ -161,7 +174,7 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
                 val sourcePath = repository.copySource(getApplication(), uri, draft.id)
                 val project = draft.copy(sourcePath = sourcePath)
                 _uiState.value = _uiState.value.copy(isProcessingImage = false)
-                addAndOpen(project)
+                addAndOpen(project, showMaterialSummary = true)
             } catch (cancelled: CancellationException) {
                 _uiState.value = _uiState.value.copy(isProcessingImage = false)
                 throw cancelled
@@ -399,12 +412,13 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(message = null)
     }
 
-    private fun addAndOpen(project: BeadProject) {
+    private fun addAndOpen(project: BeadProject, showMaterialSummary: Boolean = false) {
         val state = _uiState.value
         _uiState.value = state.copy(
             projects = listOf(project) + state.projects,
             activeCraftProjectId = project.id,
             openProjectRequestId = project.id,
+            materialSummaryRequestProjectId = project.id.takeIf { showMaterialSummary },
             selectedEditorColor = firstUsedColor(project) ?: 0,
             editorRevision = state.editorRevision + 1,
         )

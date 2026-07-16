@@ -74,8 +74,8 @@ object PatternExporter {
     private const val HARD_MAX_PNG_PIXELS = DEFAULT_PNG_MAX_PIXEL_COUNT
 
     private val symbolAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    private val regularTypeface = Typeface.create("sans-serif", Typeface.NORMAL)
-    private val mediumTypeface = Typeface.create("sans-serif", Typeface.BOLD)
+    private val regularTypeface by lazy { Typeface.create("sans-serif", Typeface.NORMAL) }
+    private val mediumTypeface by lazy { Typeface.create("sans-serif", Typeface.BOLD) }
 
     /**
      * Exports an A4 portrait PDF. Page one contains project details and the first part of

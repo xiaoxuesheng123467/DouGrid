@@ -39,6 +39,7 @@ import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FormatColorFill
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Palette
@@ -63,6 +64,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
@@ -85,6 +87,8 @@ import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.core.EMPTY_CELL
 import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.EditorTool
+import com.qiao.dougrid.data.InventoryEntry
+import com.qiao.dougrid.export.MaterialPlanner
 import com.qiao.dougrid.export.PatternExporter
 import com.qiao.dougrid.export.PngExportOptions
 import com.qiao.dougrid.export.PngMode
@@ -100,6 +104,7 @@ fun EditorScreen(
     state: DouGridUiState,
     viewModel: DouGridViewModel,
     onBack: () -> Unit,
+    onOpenInventory: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -110,6 +115,13 @@ fun EditorScreen(
     var showMaterials by rememberSaveable { mutableStateOf(false) }
     var referenceAlpha by rememberSaveable { mutableFloatStateOf(0f) }
     var pendingPngMode by remember { mutableStateOf(PngMode.PIXEL_ART) }
+
+    LaunchedEffect(state.materialSummaryRequestProjectId, project.id) {
+        if (state.materialSummaryRequestProjectId == project.id) {
+            showMaterials = true
+            viewModel.consumeMaterialSummaryRequest(project.id)
+        }
+    }
     val reference = remember(project.sourcePath) {
         project.sourcePath?.let { path -> BitmapFactory.decodeFile(path)?.asImageBitmap() }
     }
@@ -192,7 +204,7 @@ fun EditorScreen(
                                 leadingIcon = { Icon(Icons.Default.Share, null) },
                                 onClick = {
                                     exportMenu = false
-                                    val text = PatternExporter.shoppingListText(project, palette)
+                                    val text = MaterialPlanner.procurementListText(project, palette, state.inventory)
                                     context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_SUBJECT, "${project.title}采购单")
@@ -271,7 +283,16 @@ fun EditorScreen(
         )
     }
     if (showMaterials) {
-        MaterialsSheet(project, palette, onDismiss = { showMaterials = false })
+        MaterialsSheet(
+            project = project,
+            palette = palette,
+            inventory = state.inventory,
+            onOpenInventory = {
+                showMaterials = false
+                onOpenInventory(project.id)
+            },
+            onDismiss = { showMaterials = false },
+        )
     }
     if (showRename) {
         RenameDialog(
@@ -474,25 +495,56 @@ private fun PaletteSheet(
 }
 
 @Composable
-private fun MaterialsSheet(project: BeadProject, palette: BeadPalette, onDismiss: () -> Unit) {
-    val materials = remember(project.modifiedAt) { PatternExporter.materials(project, palette) }
+private fun MaterialsSheet(
+    project: BeadProject,
+    palette: BeadPalette,
+    inventory: List<InventoryEntry>,
+    onOpenInventory: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val materials = remember(project.modifiedAt, inventory) { MaterialPlanner.plan(project, palette, inventory) }
+    val totalShortage = materials.sumOf { it.shortage }
+    val shortageColors = materials.count { it.shortage > 0 }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().height(520.dp).padding(horizontal = 16.dp)) {
-            Text("材料用量", style = MaterialTheme.typography.titleLarge)
-            Text("${project.grid.beadCount()} 颗 · ${materials.size} 色 · ${project.boardCount} 板", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(10.dp))
-            androidx.compose.foundation.lazy.LazyColumn {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.82f).padding(horizontal = 16.dp)) {
+            Text("已识别豆子型号", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "${project.grid.beadCount()} 颗 · ${materials.size} 色 · ${project.boardCount} 板",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                if (totalShortage > 0) "豆仓还缺 $totalShortage 颗，$shortageColors 个型号需要补货" else "豆仓库存已满足这张图纸",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (totalShortage > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Button(
+                onClick = onOpenInventory,
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
+            ) {
+                Icon(Icons.Default.Inventory2, contentDescription = null)
+                Spacer(Modifier.size(8.dp))
+                Text(if (totalShortage > 0) "去豆仓补货" else "查看豆仓")
+            }
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.weight(1f)) {
                 items(materials, key = { it.color.code }) { item ->
                     Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(30.dp).clip(MaterialTheme.shapes.small).background(Color(item.color.opaqueArgb)))
                         Spacer(Modifier.size(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${item.symbol} · ${item.color.code}", fontWeight = FontWeight.SemiBold)
-                            if (!item.color.name.equals(item.color.code, ignoreCase = true)) {
-                                Text(item.color.name, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                            Text(
+                                "需要 ${item.needed} · 现有 ${item.onHand}" +
+                                    if (item.shortage > 0) " · 缺 ${item.shortage}" else " · 已够",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (item.shortage > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
-                        Text("${item.beadCount} 颗", style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            if (item.bagsToBuy > 0) "买 ${item.bagsToBuy} 袋" else "无需购买",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (item.bagsToBuy > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        )
                     }
                     HorizontalDivider()
                 }

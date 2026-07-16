@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,7 +55,8 @@ import com.qiao.dougrid.DouGridViewModel
 import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.InventoryEntry
-import kotlin.math.ceil
+import com.qiao.dougrid.data.MainDestination
+import com.qiao.dougrid.export.MaterialPlanner
 
 private enum class InventoryFilter { REQUIRED, SHORTAGE, STOCKED, ALL }
 
@@ -94,6 +96,15 @@ fun InventoryScreen(state: DouGridUiState, viewModel: DouGridViewModel) {
         (count - (inventoryByCode[code]?.onHand ?: 0)).coerceAtLeast(0)
     }
 
+    LaunchedEffect(state.activeCraftProjectId, state.mainDestination) {
+        val requested = usableProjects.firstOrNull { it.id == state.activeCraftProjectId }
+        if (state.mainDestination == MainDestination.INVENTORY && requested != null) {
+            projectId = requested.id
+            paletteId = requested.paletteId
+            filterName = InventoryFilter.REQUIRED.name
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
             title = {
@@ -105,7 +116,7 @@ fun InventoryScreen(state: DouGridUiState, viewModel: DouGridViewModel) {
             actions = {
                 if (project != null && totalShortage > 0) {
                     IconButton(onClick = {
-                        val text = shortageList(project, palette, inventoryByCode)
+                        val text = MaterialPlanner.procurementListText(project, palette, state.inventory)
                         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_SUBJECT, "${project.title}采购单")
@@ -321,25 +332,4 @@ private fun InventoryEditDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
-}
-
-private fun shortageList(
-    project: BeadProject,
-    palette: BeadPalette,
-    inventory: Map<String, InventoryEntry>,
-): String = buildString {
-    appendLine("${project.title} · 拼豆采购单")
-    appendLine("色卡：${palette.title}")
-    appendLine("尺寸：${project.grid.width} × ${project.grid.height}，共 ${project.grid.beadCount()} 颗")
-    appendLine()
-    project.grid.colorCounts().entries
-        .mapNotNull { (index, needed) -> palette.colors.getOrNull(index)?.let { Triple(it, needed, inventory[it.code]) } }
-        .map { (color, needed, stock) -> Triple(color, needed, (needed - (stock?.onHand ?: 0)).coerceAtLeast(0)) }
-        .filter { it.third > 0 }
-        .sortedBy { it.first.code }
-        .forEach { (color, needed, missing) ->
-            val bagSize = inventory[color.code]?.bagSize ?: 1_000
-            val bags = ceil(missing.toDouble() / bagSize).toInt()
-            appendLine("${color.code}  缺 $missing 颗  约 $bags 袋（需要 $needed）")
-        }
 }

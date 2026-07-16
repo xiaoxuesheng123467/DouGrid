@@ -33,4 +33,17 @@ class MainActivitySmokeTest {
         composeRule.onNodeWithText("现有").assertIsDisplayed()
         composeRule.onNodeWithText("缺少").assertIsDisplayed()
     }
+
+    @Test
+    fun materialSummaryShowsShortagesAndOpensLinkedInventory() {
+        composeRule.waitUntilAtLeastOneExists(hasText("郁金香杯垫"), timeoutMillis = 10_000)
+
+        composeRule.onNode(hasText("郁金香杯垫") and hasText("待开拼")).performClick()
+        composeRule.onNodeWithText("用量").performClick()
+        composeRule.onNodeWithText("已识别豆子型号").assertIsDisplayed()
+        composeRule.onNodeWithText("去豆仓补货").performClick()
+
+        composeRule.onNodeWithText("搜索色号").assertIsDisplayed()
+        composeRule.onNodeWithText("郁金香杯垫").assertIsDisplayed()
+    }
 }

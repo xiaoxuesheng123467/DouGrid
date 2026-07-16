@@ -126,6 +126,11 @@ fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
                             state = state,
                             viewModel = viewModel,
                             onBack = { navController.popBackStack() },
+                            onOpenInventory = { projectId ->
+                                viewModel.selectCraftProject(projectId)
+                                viewModel.selectMainDestination(MainDestination.INVENTORY)
+                                navController.popBackStack(Routes.Main, inclusive = false)
+                            },
                         )
                     }
                 }
@@ -149,12 +154,12 @@ private fun MainWorkspace(
     onImportUri: (Uri) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    var selected by rememberSaveable { mutableStateOf(MainDestination.LIBRARY) }
+    val selected = state.mainDestination
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val expanded = maxWidth >= 760.dp
         if (expanded) {
             Row(Modifier.fillMaxSize()) {
-                MainNavigationRail(selected = selected, onSelected = { selected = it })
+                MainNavigationRail(selected = selected, onSelected = viewModel::selectMainDestination)
                 MainContent(
                     selected = selected,
                     state = state,
@@ -166,7 +171,7 @@ private fun MainWorkspace(
             }
         } else {
             Scaffold(
-                bottomBar = { MainNavigationBar(selected = selected, onSelected = { selected = it }) },
+                bottomBar = { MainNavigationBar(selected = selected, onSelected = viewModel::selectMainDestination) },
             ) { padding ->
                 MainContent(
                     selected = selected,
