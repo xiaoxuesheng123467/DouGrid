@@ -58,7 +58,9 @@ fun PatternCanvas(
     window: GridWindow? = null,
     referenceImage: ImageBitmap? = null,
     referenceAlpha: Float = 0f,
+    onStrokeStart: () -> Unit = {},
     onStroke: (List<Int>) -> Unit = {},
+    onStrokeEnd: () -> Unit = {},
     onCellAction: (Int) -> Unit = {},
 ) {
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -77,41 +79,70 @@ fun PatternCanvas(
 
     val gestureModifier = when {
         mode == PatternCanvasMode.PREVIEW -> Modifier
-        mode == PatternCanvasMode.CRAFT -> Modifier.pointerInput(grid, gridWindow, revision, scale, pan, canvasSize) {
+        mode == PatternCanvasMode.CRAFT -> Modifier.pointerInput(grid, gridWindow, scale, pan, canvasSize) {
             detectTapGestures { position ->
                 mapToCell(position, canvasSize, grid, gridWindow, scale, pan)?.let(onCellAction)
             }
         }
         tool == EditorTool.PENCIL || tool == EditorTool.ERASER -> Modifier
-            .pointerInput(grid, gridWindow, tool, revision, scale, pan, canvasSize) {
+            .pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
                 var stroke = linkedSetOf<Int>()
                 var previous: Int? = null
+                fun emitNewCells(candidates: Iterable<Int>) {
+                    val added = ArrayList<Int>()
+                    candidates.forEach { index ->
+                        if (stroke.add(index)) added += index
+                    }
+                    if (added.isNotEmpty()) onStroke(added)
+                }
                 detectDragGestures(
-                    onDragStart = { position ->
+                    orientationLock = null,
+                    onDragStart = { down, slopTriggerChange, _ ->
+                        onStrokeStart()
                         stroke = linkedSetOf()
-                        previous = mapToCell(position, canvasSize, grid, gridWindow, scale, pan)
-                        previous?.let(stroke::add)
+                        val downCell = mapToCell(down.position, canvasSize, grid, gridWindow, scale, pan)
+                        val slopCell = mapToCell(
+                            slopTriggerChange.position,
+                            canvasSize,
+                            grid,
+                            gridWindow,
+                            scale,
+                            pan,
+                        )
+                        when {
+                            downCell != null && slopCell != null -> emitNewCells(lineIndices(downCell, slopCell, grid.width))
+                            downCell != null -> emitNewCells(listOf(downCell))
+                            slopCell != null -> emitNewCells(listOf(slopCell))
+                        }
+                        previous = slopCell ?: downCell
                     },
                     onDrag = { change, _ ->
                         val current = mapToCell(change.position, canvasSize, grid, gridWindow, scale, pan)
                         if (current != null) {
                             val last = previous
-                            if (last == null) stroke.add(current)
-                            else stroke.addAll(lineIndices(last, current, grid.width))
+                            val candidates = if (last == null) listOf(current) else lineIndices(last, current, grid.width)
+                            emitNewCells(candidates)
                             previous = current
                         }
                         change.consume()
                     },
-                    onDragEnd = { if (stroke.isNotEmpty()) onStroke(stroke.toList()) },
-                    onDragCancel = { stroke.clear() },
+                    onDragEnd = { onStrokeEnd() },
+                    onDragCancel = {
+                        stroke.clear()
+                        onStrokeEnd()
+                    },
                 )
             }
-            .pointerInput(grid, gridWindow, tool, revision, scale, pan, canvasSize) {
+            .pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
                 detectTapGestures { position ->
-                    mapToCell(position, canvasSize, grid, gridWindow, scale, pan)?.let { onStroke(listOf(it)) }
+                    mapToCell(position, canvasSize, grid, gridWindow, scale, pan)?.let {
+                        onStrokeStart()
+                        onStroke(listOf(it))
+                        onStrokeEnd()
+                    }
                 }
             }
-        tool != EditorTool.PAN -> Modifier.pointerInput(grid, gridWindow, tool, revision, scale, pan, canvasSize) {
+        tool != EditorTool.PAN -> Modifier.pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
             detectTapGestures { position ->
                 mapToCell(position, canvasSize, grid, gridWindow, scale, pan)?.let(onCellAction)
             }
@@ -140,6 +171,7 @@ fun PatternCanvas(
             hideCompleted = hideCompleted,
             referenceImage = referenceImage,
             referenceAlpha = referenceAlpha,
+            revision = revision,
         )
     }
 }
@@ -161,6 +193,7 @@ fun PatternThumbnail(
     )
 }
 
+@Suppress("UNUSED_PARAMETER")
 private fun DrawScope.drawPattern(
     grid: PatternGrid,
     palette: BeadPalette,
@@ -175,6 +208,7 @@ private fun DrawScope.drawPattern(
     hideCompleted: Boolean,
     referenceImage: ImageBitmap?,
     referenceAlpha: Float,
+    revision: Long,
 ) {
     val baseCell = min(size.width / window.width, size.height / window.height)
     val cell = baseCell * scale

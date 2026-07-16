@@ -3,6 +3,7 @@
 package com.qiao.dougrid.ui.screens
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -64,6 +65,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,8 +78,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -95,6 +99,7 @@ import com.qiao.dougrid.export.PngMode
 import com.qiao.dougrid.ui.components.PatternCanvas
 import com.qiao.dougrid.ui.components.PatternCanvasMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -115,6 +120,12 @@ fun EditorScreen(
     var showMaterials by rememberSaveable { mutableStateOf(false) }
     var referenceAlpha by rememberSaveable { mutableFloatStateOf(0f) }
     var pendingPngMode by remember { mutableStateOf(PngMode.PIXEL_ART) }
+    val beadCount = remember(project.id, state.editorStatsRevision) { project.grid.beadCount() }
+    val usedColors = remember(project.id, state.editorStatsRevision) {
+        project.grid.colorCounts().entries
+            .sortedByDescending { it.value }
+            .map { it.key to it.value }
+    }
 
     LaunchedEffect(state.materialSummaryRequestProjectId, project.id) {
         if (state.materialSummaryRequestProjectId == project.id) {
@@ -122,9 +133,7 @@ fun EditorScreen(
             viewModel.consumeMaterialSummaryRequest(project.id)
         }
     }
-    val reference = remember(project.sourcePath) {
-        project.sourcePath?.let { path -> BitmapFactory.decodeFile(path)?.asImageBitmap() }
-    }
+    val reference = rememberReferenceImage(project.id, project.sourcePath)
     val safeName = project.title.replace(Regex("[^\\p{L}\\p{N}_-]+"), "-").trim('-').ifBlank { "dougrid" }
 
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
@@ -161,7 +170,7 @@ fun EditorScreen(
                     Column {
                         Text(project.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "${project.grid.width} × ${project.grid.height} · ${project.grid.beadCount()} 颗 · ${project.boardCount} 板",
+                            "${project.grid.width} × ${project.grid.height} · $beadCount 颗 · ${project.boardCount} 板",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -237,6 +246,7 @@ fun EditorScreen(
                         project = project,
                         palette = palette,
                         state = state,
+                        usedColors = usedColors,
                         referenceAvailable = reference != null,
                         referenceAlpha = referenceAlpha,
                         onReferenceAlpha = { referenceAlpha = it },
@@ -261,6 +271,7 @@ fun EditorScreen(
                         project = project,
                         palette = palette,
                         state = state,
+                        usedColors = usedColors,
                         referenceAvailable = reference != null,
                         referenceAlpha = referenceAlpha,
                         onReferenceAlpha = { referenceAlpha = it },
@@ -287,6 +298,8 @@ fun EditorScreen(
             project = project,
             palette = palette,
             inventory = state.inventory,
+            beadCount = beadCount,
+            statsRevision = state.editorStatsRevision,
             onOpenInventory = {
                 showMaterials = false
                 onOpenInventory(project.id)
@@ -304,12 +317,54 @@ fun EditorScreen(
     }
 }
 
+private data class LoadedReferenceImage(
+    val owner: Bitmap,
+    val image: ImageBitmap,
+)
+
+@Composable
+private fun rememberReferenceImage(projectId: String, path: String?): ImageBitmap? {
+    val loadedState = remember(projectId, path) { mutableStateOf<LoadedReferenceImage?>(null) }
+
+    LaunchedEffect(projectId, path, loadedState) {
+        if (path == null) return@LaunchedEffect
+        var decoded: Bitmap? = null
+        try {
+            withContext(Dispatchers.IO) {
+                decoded = decodeReferenceBitmap(path)
+            }
+            ensureActive()
+            val bitmap = decoded ?: return@LaunchedEffect
+            loadedState.value = LoadedReferenceImage(bitmap, bitmap.asImageBitmap())
+            decoded = null
+        } finally {
+            decoded?.recycle()
+        }
+    }
+    DisposableEffect(loadedState) {
+        onDispose {
+            val bitmap = loadedState.value?.owner
+            loadedState.value = null
+            if (bitmap != null && !bitmap.isRecycled) bitmap.recycle()
+        }
+    }
+    return loadedState.value?.image
+}
+
+private fun decodeReferenceBitmap(path: String): Bitmap? = try {
+    BitmapFactory.decodeFile(path)
+} catch (_: Exception) {
+    null
+} catch (_: OutOfMemoryError) {
+    null
+}
+
 @Composable
 private fun EditorCanvas(
     project: BeadProject,
     palette: BeadPalette,
     state: DouGridUiState,
-    reference: androidx.compose.ui.graphics.ImageBitmap?,
+    reference: ImageBitmap?,
     referenceAlpha: Float,
     viewModel: DouGridViewModel,
     modifier: Modifier,
@@ -318,7 +373,7 @@ private fun EditorCanvas(
         grid = project.grid,
         palette = palette,
         revision = state.editorRevision,
-        modifier = modifier,
+        modifier = modifier.testTag("editor_pattern_canvas"),
         mode = PatternCanvasMode.EDIT,
         tool = state.editorTool,
         selectedColorIndex = state.selectedEditorColor,
@@ -326,7 +381,9 @@ private fun EditorCanvas(
         highContrastGrid = state.settings.highContrastGrid,
         referenceImage = reference,
         referenceAlpha = referenceAlpha,
-        onStroke = { viewModel.applyStroke(project.id, it) },
+        onStrokeStart = { viewModel.beginEditorStroke(project.id) },
+        onStroke = { viewModel.extendEditorStroke(project.id, it) },
+        onStrokeEnd = { viewModel.endEditorStroke(project.id) },
         onCellAction = { viewModel.applyToolAt(project.id, it) },
     )
 }
@@ -336,6 +393,7 @@ private fun EditorControls(
     project: BeadProject,
     palette: BeadPalette,
     state: DouGridUiState,
+    usedColors: List<Pair<Int, Int>>,
     referenceAvailable: Boolean,
     referenceAlpha: Float,
     onReferenceAlpha: (Float) -> Unit,
@@ -344,7 +402,6 @@ private fun EditorControls(
     viewModel: DouGridViewModel,
     modifier: Modifier,
 ) {
-    val used = project.grid.colorCounts().entries.sortedByDescending { it.value }
     Column(
         modifier = modifier.background(MaterialTheme.colorScheme.surface).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -367,13 +424,13 @@ private fun EditorControls(
             }
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.fillMaxWidth()) {
-            items(used.take(18), key = { it.key }) { entry ->
+            items(usedColors.take(18), key = { it.first }) { entry ->
                 ColorSwatch(
-                    color = Color(palette.colors.getOrNull(entry.key)?.opaqueArgb ?: 0xFF000000.toInt()),
-                    code = palette.colors.getOrNull(entry.key)?.code.orEmpty(),
-                    count = entry.value,
-                    selected = state.selectedEditorColor == entry.key,
-                    onClick = { viewModel.selectEditorColor(entry.key) },
+                    color = Color(palette.colors.getOrNull(entry.first)?.opaqueArgb ?: 0xFF000000.toInt()),
+                    code = palette.colors.getOrNull(entry.first)?.code.orEmpty(),
+                    count = entry.second,
+                    selected = state.selectedEditorColor == entry.first,
+                    onClick = { viewModel.selectEditorColor(entry.first) },
                 )
             }
         }
@@ -405,7 +462,7 @@ private fun EditorControls(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            Text("${used.size} 色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${usedColors.size} 色", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -499,17 +556,19 @@ private fun MaterialsSheet(
     project: BeadProject,
     palette: BeadPalette,
     inventory: List<InventoryEntry>,
+    beadCount: Int,
+    statsRevision: Long,
     onOpenInventory: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val materials = remember(project.modifiedAt, inventory) { MaterialPlanner.plan(project, palette, inventory) }
+    val materials = remember(project.id, statsRevision, inventory) { MaterialPlanner.plan(project, palette, inventory) }
     val totalShortage = materials.sumOf { it.shortage }
     val shortageColors = materials.count { it.shortage > 0 }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.82f).padding(horizontal = 16.dp)) {
             Text("已识别豆子型号", style = MaterialTheme.typography.titleLarge)
             Text(
-                "${project.grid.beadCount()} 颗 · ${materials.size} 色 · ${project.boardCount} 板",
+                "$beadCount 颗 · ${materials.size} 色 · ${project.boardCount} 板",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(

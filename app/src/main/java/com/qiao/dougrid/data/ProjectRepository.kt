@@ -1,10 +1,12 @@
 package com.qiao.dougrid.data
 
 import android.content.Context
+import android.graphics.Bitmap
 import android.util.AtomicFile
 import android.util.Base64
 import com.qiao.dougrid.core.ConversionMode
 import com.qiao.dougrid.core.PatternGrid
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -12,6 +14,7 @@ import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.zip.GZIPInputStream
@@ -19,7 +22,7 @@ import java.util.zip.GZIPOutputStream
 
 class ProjectRepository(context: Context) {
     private val stateFile = AtomicFile(File(context.filesDir, "dougrid-state-v1.json"))
-    private val sourceDirectory = File(context.filesDir, "project-sources").apply { mkdirs() }
+    private val sourceDirectory = File(context.filesDir, "project-sources").apply { mkdirs() }.canonicalFile
 
     suspend fun load(): PersistedAppState = withContext(Dispatchers.IO) {
         runCatching {
@@ -46,14 +49,50 @@ class ProjectRepository(context: Context) {
 
     suspend fun copySource(context: Context, source: android.net.Uri, projectId: String): String? =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val destination = File(sourceDirectory, "$projectId-source")
-                context.contentResolver.openInputStream(source)?.use { input ->
-                    destination.outputStream().use(input::copyTo)
-                } ?: return@runCatching null
-                destination.absolutePath
-            }.getOrNull()
+            val destination = managedProjectFile(projectId, LEGACY_SOURCE_SUFFIX) ?: return@withContext null
+            fileOperationOrNull {
+                val input = context.contentResolver.openInputStream(source) ?: return@fileOperationOrNull null
+                input.use { sourceInput ->
+                    writeAtomically(destination) { output -> sourceInput.copyTo(output) }
+                }
+            }
         }
+
+    suspend fun saveReference(bitmap: Bitmap, projectId: String): String? =
+        withContext(Dispatchers.IO) {
+            val destination = managedProjectFile(projectId, REFERENCE_SUFFIX) ?: return@withContext null
+            fileOperationOrNull {
+                writeAtomically(destination) { output ->
+                    check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                        "无法编码裁剪参考图"
+                    }
+                }
+            }
+        }
+
+    suspend fun copyReference(sourcePath: String, newProjectId: String): String? =
+        withContext(Dispatchers.IO) {
+            val source = managedReferenceFile(sourcePath) ?: return@withContext null
+            val destination = managedProjectFile(newProjectId, REFERENCE_SUFFIX) ?: return@withContext null
+            if (source.canonicalFile == destination.canonicalFile) return@withContext destination.absolutePath
+            fileOperationOrNull {
+                source.inputStream().buffered().use { input ->
+                    writeAtomically(destination) { output -> input.copyTo(output) }
+                }
+            }
+        }
+
+    suspend fun deleteProjectReferences(projectId: String): Int = withContext(Dispatchers.IO) {
+        deleteProjectReferencesInternal(listOf(projectId))
+    }
+
+    suspend fun deleteProjectReferences(projectIds: Collection<String>): Int = withContext(Dispatchers.IO) {
+        deleteProjectReferencesInternal(projectIds)
+    }
+
+    suspend fun deleteOrphanedReferences(referencedPaths: Collection<String>): Int = withContext(Dispatchers.IO) {
+        deleteOrphanedReferencesInternal(referencedPaths)
+    }
 
     private fun encodeState(state: PersistedAppState): JSONObject = JSONObject().apply {
         put("schema", 1)
@@ -135,6 +174,7 @@ class ProjectRepository(context: Context) {
         put("highContrastGrid", settings.highContrastGrid)
         put("keepScreenOnInCraftMode", settings.keepScreenOnInCraftMode)
         put("confirmInventoryDeduction", settings.confirmInventoryDeduction)
+        put("hasSeenTutorial", settings.hasSeenTutorial)
     }
 
     private fun decodeSettings(item: JSONObject?): AppSettings = AppSettings(
@@ -144,6 +184,7 @@ class ProjectRepository(context: Context) {
         highContrastGrid = item?.optBoolean("highContrastGrid", false) ?: false,
         keepScreenOnInCraftMode = item?.optBoolean("keepScreenOnInCraftMode", true) ?: true,
         confirmInventoryDeduction = item?.optBoolean("confirmInventoryDeduction", true) ?: true,
+        hasSeenTutorial = item?.optBoolean("hasSeenTutorial", false) ?: false,
     )
 
     private fun encodeCells(cells: IntArray): String {
@@ -182,8 +223,134 @@ class ProjectRepository(context: Context) {
     private inline fun <reified T : Enum<T>> enumValueOrDefault(raw: String?, fallback: T): T =
         enumValues<T>().firstOrNull { it.name == raw } ?: fallback
 
+    private fun writeAtomically(destination: File, write: (FileOutputStream) -> Unit): String {
+        val target = AtomicFile(destination)
+        val output = target.startWrite()
+        try {
+            write(output)
+            target.finishWrite(output)
+            return destination.absolutePath
+        } catch (error: Throwable) {
+            target.failWrite(output)
+            throw error
+        }
+    }
+
+    private inline fun <T> fileOperationOrNull(operation: () -> T): T? = try {
+        operation()
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun deleteProjectReferencesInternal(projectIds: Collection<String>): Int {
+        var deleted = 0
+        for (projectId in projectIds.distinct()) {
+            for (suffix in listOf(LEGACY_SOURCE_SUFFIX, REFERENCE_SUFFIX)) {
+                val reference = managedProjectFile(projectId, suffix) ?: continue
+                val existed = reference.exists() || File("${reference.path}.bak").exists()
+                AtomicFile(reference).delete()
+                if (existed) deleted++
+            }
+            managedProjectFile(projectId, LEGACY_REFERENCE_TEMP_SUFFIX)?.delete()
+        }
+        return deleted
+    }
+
+    private fun deleteOrphanedReferencesInternal(referencedPaths: Collection<String>): Int {
+        val retained = canonicalManagedReferencePaths(referencedPaths) ?: return 0
+        val entries = sourceDirectory.listFiles() ?: return 0
+        val candidates = linkedMapOf<String, File>()
+        for (entry in entries) {
+            val candidate = managedReferenceBaseForEntry(entry) ?: continue
+            val canonicalPath = runCatching { candidate.canonicalPath }.getOrNull() ?: continue
+            candidates.putIfAbsent(canonicalPath, candidate)
+        }
+
+        var deleted = 0
+        for ((canonicalPath, candidate) in candidates) {
+            if (canonicalPath in retained) continue
+            val backup = File("${candidate.path}$ATOMIC_BACKUP_SUFFIX")
+            val existed = candidate.isFile || backup.isFile
+            val removed = runCatching {
+                AtomicFile(candidate).delete()
+                !candidate.exists() && !backup.exists()
+            }.getOrDefault(false)
+            if (existed && removed) deleted++
+        }
+        return deleted
+    }
+
+    private fun canonicalManagedReferencePaths(paths: Collection<String>): Set<String>? {
+        val retained = hashSetOf<String>()
+        for (path in paths) {
+            val canonical = try {
+                File(path).canonicalFile
+            } catch (_: Exception) {
+                return null
+            }
+            if (canonical.parentFile == sourceDirectory && isManagedReferenceName(canonical.name)) {
+                retained += canonical.path
+            }
+        }
+        return retained
+    }
+
+    private fun managedReferenceBaseForEntry(entry: File): File? {
+        if (!entry.isFile) return null
+        val canonicalEntry = runCatching { entry.canonicalFile }.getOrNull() ?: return null
+        val canonicalParent = runCatching { entry.parentFile?.canonicalFile }.getOrNull() ?: return null
+        if (canonicalParent != sourceDirectory) return null
+        if (canonicalEntry != entry.absoluteFile) return null
+        val baseName = when {
+            isManagedReferenceName(entry.name) -> entry.name
+            entry.name.endsWith(ATOMIC_BACKUP_SUFFIX) ->
+                entry.name.removeSuffix(ATOMIC_BACKUP_SUFFIX).takeIf(::isManagedReferenceName)
+            else -> null
+        } ?: return null
+        val candidate = File(sourceDirectory, baseName).absoluteFile
+        if (candidate.exists()) {
+            val canonicalCandidate = runCatching { candidate.canonicalFile }.getOrNull() ?: return null
+            if (!candidate.isFile || canonicalCandidate != candidate) return null
+        }
+        return candidate
+    }
+
+    private fun managedProjectFile(projectId: String, suffix: String): File? {
+        if (!PROJECT_ID_PATTERN.matches(projectId)) return null
+        val candidate = File(sourceDirectory, "$projectId$suffix").absoluteFile
+        if (candidate.parentFile?.canonicalFile != sourceDirectory) return null
+        if (candidate.exists() && candidate.canonicalFile != candidate) return null
+        return candidate
+    }
+
+    private fun managedReferenceFile(path: String): File? {
+        val requested = File(path).absoluteFile
+        if (requested.parentFile?.canonicalFile != sourceDirectory || !isManagedReferenceName(requested.name)) return null
+        val canonical = runCatching { requested.canonicalFile }.getOrNull() ?: return null
+        return canonical.takeIf { it.parentFile == sourceDirectory && it.isFile }
+    }
+
+    private fun isManagedReferenceName(name: String): Boolean {
+        val projectId = when {
+            name.endsWith(REFERENCE_SUFFIX) -> name.removeSuffix(REFERENCE_SUFFIX)
+            name.endsWith(LEGACY_SOURCE_SUFFIX) -> name.removeSuffix(LEGACY_SOURCE_SUFFIX)
+            else -> return false
+        }
+        return PROJECT_ID_PATTERN.matches(projectId)
+    }
+
     private fun JSONArray?.objects(): Sequence<JSONObject> = sequence {
         val source = this@objects ?: return@sequence
         for (index in 0 until source.length()) source.optJSONObject(index)?.let { yield(it) }
+    }
+
+    private companion object {
+        val PROJECT_ID_PATTERN = Regex("[A-Za-z0-9_-]{1,128}")
+        const val LEGACY_SOURCE_SUFFIX = "-source"
+        const val REFERENCE_SUFFIX = "-reference.png"
+        const val LEGACY_REFERENCE_TEMP_SUFFIX = "-reference.tmp"
+        const val ATOMIC_BACKUP_SUFFIX = ".bak"
     }
 }

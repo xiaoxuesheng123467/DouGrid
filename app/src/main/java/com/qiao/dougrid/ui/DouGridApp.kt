@@ -47,6 +47,7 @@ import com.qiao.dougrid.ui.screens.ImageImportScreen
 import com.qiao.dougrid.ui.screens.InventoryScreen
 import com.qiao.dougrid.ui.screens.LibraryScreen
 import com.qiao.dougrid.ui.screens.SettingsScreen
+import com.qiao.dougrid.ui.components.TutorialDialog
 
 private object Routes {
     const val Main = "main"
@@ -145,6 +146,9 @@ fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
         }
         SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
     }
+    if (state.showTutorial) {
+        TutorialDialog(onFinish = viewModel::completeTutorial)
+    }
 }
 
 @Composable
@@ -202,6 +206,7 @@ private fun MainContent(
                 viewModel = viewModel,
                 onImportUri = onImportUri,
                 onOpenSettings = onOpenSettings,
+                onOpenTutorial = viewModel::openTutorial,
             )
             MainDestination.CRAFT -> CraftScreen(state = state, viewModel = viewModel)
             MainDestination.INVENTORY -> InventoryScreen(state = state, viewModel = viewModel)

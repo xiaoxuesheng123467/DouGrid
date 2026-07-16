@@ -2,9 +2,10 @@
 
 package com.qiao.dougrid.ui.screens
 
+import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ContentCopy
@@ -52,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -71,6 +74,7 @@ import com.qiao.dougrid.DouGridViewModel
 import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.BeadTemplate
 import com.qiao.dougrid.data.ProjectStatus
+import com.qiao.dougrid.image.ImageFormatSupport
 import com.qiao.dougrid.ui.components.PatternThumbnail
 import java.io.File
 import java.text.SimpleDateFormat
@@ -83,18 +87,44 @@ fun LibraryScreen(
     viewModel: DouGridViewModel,
     onImportUri: (Uri) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenTutorial: () -> Unit,
 ) {
     val context = LocalContext.current
     var search by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf<String?>(null) }
     var showBlankDialog by rememberSaveable { mutableStateOf(false) }
     var showTrash by rememberSaveable { mutableStateOf(false) }
-    var cameraUri by remember { mutableStateOf<Uri?>(null) }
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(onImportUri)
+    var cameraUriString by rememberSaveable { mutableStateOf<String?>(null) }
+    var cameraPath by rememberSaveable { mutableStateOf<String?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { selected ->
+            runCatching {
+                context.contentResolver.takePersistableUriPermission(selected, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            onImportUri(selected)
+        }
     }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) cameraUri?.let(onImportUri)
+        val completedUri = cameraUriString?.let(Uri::parse)
+        val completedPath = cameraPath
+        cameraUriString = null
+        cameraPath = null
+        if (success) {
+            completedUri?.let(onImportUri)
+        } else {
+            completedPath?.let(::File)?.delete()
+        }
+    }
+    LaunchedEffect(cameraPath) {
+        val activePath = cameraPath
+        val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1_000L
+        File(context.cacheDir, "images").listFiles().orEmpty()
+            .filter { file ->
+                file.name.startsWith("dougrid-camera-") &&
+                    file.absolutePath != activePath &&
+                    file.lastModified() < cutoff
+            }
+            .forEach(File::delete)
     }
     val query = search.trim()
     val categories = state.templates.map(BeadTemplate::category).distinct()
@@ -118,6 +148,9 @@ fun LibraryScreen(
                     IconButton(onClick = { showTrash = true }) {
                         Icon(Icons.Default.RestoreFromTrash, contentDescription = "回收站")
                     }
+                }
+                IconButton(onClick = onOpenTutorial) {
+                    Icon(Icons.AutoMirrored.Filled.HelpOutline, contentDescription = "使用教程")
                 }
                 IconButton(onClick = onOpenSettings) {
                     Icon(Icons.Default.Settings, contentDescription = "设置")
@@ -149,21 +182,33 @@ fun LibraryScreen(
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                            imagePicker.launch(ImageFormatSupport.supportedMimeTypes(Build.VERSION.SDK_INT))
                         },
                         modifier = Modifier.weight(1f),
                     ) {
                         Icon(Icons.Default.PhotoLibrary, contentDescription = null)
                         Spacer(Modifier.size(8.dp))
-                        Text("相册")
+                        Text("图片")
                     }
                     FilledTonalButton(
                         onClick = {
                             val directory = File(context.cacheDir, "images").apply { mkdirs() }
-                            val file = File.createTempFile("dougrid-camera-", ".jpg", directory)
-                            val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
-                            cameraUri = uri
-                            camera.launch(uri)
+                            cameraPath?.let(::File)?.delete()
+                            var pendingFile: File? = null
+                            runCatching {
+                                val file = File.createTempFile("dougrid-camera-", ".jpg", directory).also {
+                                    pendingFile = it
+                                }
+                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                                cameraUriString = uri.toString()
+                                cameraPath = file.absolutePath
+                                camera.launch(uri)
+                            }.onFailure { error ->
+                                pendingFile?.delete()
+                                cameraUriString = null
+                                cameraPath = null
+                                viewModel.showMessage(error.message?.let { "无法启动相机：$it" } ?: "无法启动相机")
+                            }
                         },
                         modifier = Modifier.weight(1f),
                     ) {

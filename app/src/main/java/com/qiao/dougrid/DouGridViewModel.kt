@@ -25,11 +25,15 @@ import com.qiao.dougrid.image.BitmapPatternConverter
 import com.qiao.dougrid.image.ImageImportOptions
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class DouGridUiState(
     val isLoading: Boolean = true,
@@ -41,20 +45,30 @@ data class DouGridUiState(
     val templates: List<BeadTemplate> = emptyList(),
     val activeCraftProjectId: String? = null,
     val editorRevision: Long = 0,
+    val editorStatsRevision: Long = 0,
     val selectedEditorColor: Int = 0,
     val editorTool: EditorTool = EditorTool.PENCIL,
     val openProjectRequestId: String? = null,
     val materialSummaryRequestProjectId: String? = null,
     val mainDestination: MainDestination = MainDestination.LIBRARY,
+    val showTutorial: Boolean = false,
     val message: String? = null,
 )
 
 class DouGridViewModel(application: Application) : AndroidViewModel(application) {
+    private data class ActiveStroke(
+        val projectId: String,
+        val replacement: Int,
+        val before: LinkedHashMap<Int, Int> = linkedMapOf(),
+    )
+
     val paletteCatalog = PaletteCatalog(application)
     private val repository = ProjectRepository(application)
     private val histories = mutableMapOf<String, EditorHistory>()
     private var saveJob: Job? = null
     private var imageImportJob: Job? = null
+    private var imageImportGeneration: Long = 0
+    private var activeStroke: ActiveStroke? = null
 
     private val _uiState = MutableStateFlow(DouGridUiState())
     val uiState: StateFlow<DouGridUiState> = _uiState.asStateFlow()
@@ -74,8 +88,12 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
                 templates = templates,
                 activeCraftProjectId = projects.firstOrNull()?.id,
                 selectedEditorColor = firstUsedColor(projects.firstOrNull()) ?: 0,
+                showTutorial = !loaded.settings.hasSeenTutorial,
             )
             if (loaded.projects.isEmpty()) scheduleSave(immediate = true)
+            repository.deleteOrphanedReferences(
+                (projects + loaded.deletedProjects).mapNotNull { it.sourcePath },
+            )
         }
     }
 
@@ -116,6 +134,19 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
         _uiState.value = _uiState.value.copy(mainDestination = destination)
     }
 
+    fun openTutorial() {
+        _uiState.value = _uiState.value.copy(showTutorial = true)
+    }
+
+    fun completeTutorial() {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            showTutorial = false,
+            settings = state.settings.copy(hasSeenTutorial = true),
+        )
+        scheduleSave(immediate = true)
+    }
+
     fun createBlank(
         title: String,
         width: Int,
@@ -142,9 +173,9 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
         title: String,
         paletteId: String,
         options: ImageImportOptions,
-        previewGrid: PatternGrid? = null,
     ) {
         if (_uiState.value.isProcessingImage) return
+        val generation = ++imageImportGeneration
         _uiState.value = _uiState.value.copy(isProcessingImage = true, message = null)
         imageImportJob = viewModelScope.launch {
             try {
@@ -153,41 +184,54 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
                 if (options.useInventoryOnly && (allowed == null || allowed.size < 2)) {
                     error("豆仓里至少要有两种当前色卡的颜色")
                 }
-                val grid = previewGrid?.also {
-                    require(it.width == options.width && it.height == options.height) {
-                        "预览已过期，请等待重新生成"
-                    }
-                }?.deepCopy() ?: BitmapPatternConverter.convert(
-                        context = getApplication(),
-                        uri = uri,
-                        palette = targetPalette,
-                        options = options,
-                        allowedPaletteIndices = allowed,
+                BitmapPatternConverter.prepareImport(
+                    context = getApplication(),
+                    uri = uri,
+                    palette = targetPalette,
+                    options = options,
+                    allowedPaletteIndices = allowed,
+                ).use { prepared ->
+                    currentCoroutineContext().ensureActive()
+                    if (generation != imageImportGeneration) return@use
+                    val draft = BeadProject(
+                        title = title.trim().ifBlank { "图片图纸" },
+                        paletteId = targetPalette.id,
+                        grid = prepared.grid,
+                        sourceMode = options.mode,
+                        status = ProjectStatus.READY,
                     )
-                val draft = BeadProject(
-                    title = title.trim().ifBlank { "图片图纸" },
-                    paletteId = targetPalette.id,
-                    grid = grid,
-                    sourceMode = options.mode,
-                    status = ProjectStatus.READY,
-                )
-                val sourcePath = repository.copySource(getApplication(), uri, draft.id)
-                val project = draft.copy(sourcePath = sourcePath)
-                _uiState.value = _uiState.value.copy(isProcessingImage = false)
-                addAndOpen(project, showMaterialSummary = true)
+                    var keepReference = false
+                    try {
+                        val sourcePath = repository.saveReference(prepared.referenceBitmap, draft.id)
+                        currentCoroutineContext().ensureActive()
+                        if (generation != imageImportGeneration) return@use
+                        addAndOpen(draft.copy(sourcePath = sourcePath), showMaterialSummary = true)
+                        keepReference = true
+                    } finally {
+                        if (!keepReference) {
+                            withContext(NonCancellable) { repository.deleteProjectReferences(draft.id) }
+                        }
+                    }
+                }
             } catch (cancelled: CancellationException) {
-                _uiState.value = _uiState.value.copy(isProcessingImage = false)
                 throw cancelled
-            } catch (error: Throwable) {
-                _uiState.value = _uiState.value.copy(
-                    isProcessingImage = false,
-                    message = error.message ?: "图片处理失败",
-                )
+            } catch (error: Exception) {
+                if (generation == imageImportGeneration) {
+                    _uiState.value = _uiState.value.copy(
+                        message = error.message ?: "图片处理失败",
+                    )
+                }
+            } finally {
+                if (generation == imageImportGeneration) {
+                    imageImportJob = null
+                    _uiState.value = _uiState.value.copy(isProcessingImage = false)
+                }
             }
         }
     }
 
     fun cancelImageImport() {
+        imageImportGeneration++
         imageImportJob?.cancel()
         imageImportJob = null
         if (_uiState.value.isProcessingImage) {
@@ -196,22 +240,56 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun applyStroke(projectId: String, indices: Collection<Int>, colorIndex: Int? = null) {
+        beginEditorStroke(projectId, colorIndex)
+        extendEditorStroke(projectId, indices)
+        endEditorStroke(projectId)
+    }
+
+    fun beginEditorStroke(projectId: String, colorIndex: Int? = null) {
         val project = project(projectId) ?: return
-        val grid = project.grid
         val replacement = colorIndex ?: when (_uiState.value.editorTool) {
             EditorTool.ERASER -> EMPTY_CELL
             else -> _uiState.value.selectedEditorColor
         }
-        val unique = indices.asSequence().filter { it in grid.cells.indices }.distinct().toList()
-        val changed = unique.filter { grid.cells[it] != replacement }
-        if (changed.isEmpty()) return
+        activeStroke = ActiveStroke(project.id, replacement)
+    }
+
+    fun extendEditorStroke(projectId: String, indices: Collection<Int>) {
+        var session = activeStroke
+        if (session?.projectId != projectId) {
+            beginEditorStroke(projectId)
+            session = activeStroke
+        }
+        session ?: return
+        val project = project(projectId) ?: return
+        val grid = project.grid
+        var changed = false
+        for (index in indices) {
+            if (index !in grid.cells.indices) continue
+            if (grid.cells[index] != session.replacement) {
+                session.before.putIfAbsent(index, grid.cells[index])
+                grid.cells[index] = session.replacement
+                changed = true
+            }
+        }
+        if (changed) {
+            val state = _uiState.value
+            _uiState.value = state.copy(editorRevision = state.editorRevision + 1)
+        }
+    }
+
+    fun endEditorStroke(projectId: String) {
+        val session = activeStroke?.takeIf { it.projectId == projectId } ?: return
+        activeStroke = null
+        if (session.before.isEmpty()) return
+        val grid = project(projectId)?.grid ?: return
+        val changed = session.before.keys.toList()
         val delta = CellDelta(
             indices = changed.toIntArray(),
-            before = IntArray(changed.size) { grid.cells[changed[it]] },
-            after = IntArray(changed.size) { replacement },
-            label = if (replacement == EMPTY_CELL) "橡皮" else "画笔",
+            before = IntArray(changed.size) { session.before.getValue(changed[it]) },
+            after = IntArray(changed.size) { grid.cells[changed[it]] },
+            label = if (session.replacement == EMPTY_CELL) "橡皮" else "画笔",
         )
-        delta.applyTo(grid)
         history(projectId).record(delta)
         touchProject(projectId)
     }
@@ -281,32 +359,56 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
 
     fun duplicateProject(projectId: String) {
         val source = project(projectId) ?: return
-        addAndOpen(
-            source.copy(
-                id = java.util.UUID.randomUUID().toString(),
-                title = "${source.title} 副本",
-                grid = source.grid.deepCopy().also { it.completed.fill(0) },
-                createdAt = now(),
-                modifiedAt = now(),
-                status = ProjectStatus.DRAFT,
-                inventoryDeducted = false,
-            ),
+        val duplicate = source.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            title = "${source.title} 副本",
+            grid = source.grid.deepCopy().also { it.completed.fill(0) },
+            createdAt = now(),
+            modifiedAt = now(),
+            status = ProjectStatus.DRAFT,
+            inventoryDeducted = false,
+            sourcePath = null,
         )
+        viewModelScope.launch {
+            var keepReference = false
+            try {
+                val copiedReference = source.sourcePath?.let { path ->
+                    repository.copyReference(path, duplicate.id)
+                }
+                currentCoroutineContext().ensureActive()
+                addAndOpen(duplicate.copy(sourcePath = copiedReference))
+                keepReference = true
+            } finally {
+                if (!keepReference) {
+                    withContext(NonCancellable) { repository.deleteProjectReferences(duplicate.id) }
+                }
+            }
+        }
     }
 
     fun deleteProject(projectId: String) {
         val state = _uiState.value
         val target = state.projects.firstOrNull { it.id == projectId } ?: return
         val remaining = state.projects.filterNot { it.id == projectId }
+        val trashCandidates = listOf(target) + state.deletedProjects
+        val retainedTrash = trashCandidates.take(30)
+        val retainedSourcePaths = (remaining + retainedTrash).mapNotNullTo(hashSetOf()) { it.sourcePath }
+        val evictedIds = trashCandidates.drop(30)
+            .filter { it.sourcePath == null || it.sourcePath !in retainedSourcePaths }
+            .map { it.id }
         _uiState.value = state.copy(
             projects = remaining,
-            deletedProjects = (listOf(target) + state.deletedProjects).take(30),
+            deletedProjects = retainedTrash,
             activeCraftProjectId = state.activeCraftProjectId.takeUnless { it == projectId }
                 ?: remaining.firstOrNull()?.id,
             editorRevision = state.editorRevision + 1,
+            editorStatsRevision = state.editorStatsRevision + 1,
         )
         histories.remove(projectId)
         scheduleSave()
+        if (evictedIds.isNotEmpty()) {
+            viewModelScope.launch { repository.deleteProjectReferences(evictedIds) }
+        }
     }
 
     fun restoreProject(projectId: String) {
@@ -320,8 +422,16 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun emptyTrash() {
-        _uiState.value = _uiState.value.copy(deletedProjects = emptyList())
+        val state = _uiState.value
+        val retainedSourcePaths = state.projects.mapNotNullTo(hashSetOf()) { it.sourcePath }
+        val removableIds = state.deletedProjects
+            .filter { it.sourcePath == null || it.sourcePath !in retainedSourcePaths }
+            .map { it.id }
+        _uiState.value = state.copy(deletedProjects = emptyList())
         scheduleSave()
+        if (removableIds.isNotEmpty()) {
+            viewModelScope.launch { repository.deleteProjectReferences(removableIds) }
+        }
     }
 
     fun selectCraftProject(projectId: String) {
@@ -421,6 +531,7 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
             materialSummaryRequestProjectId = project.id.takeIf { showMaterialSummary },
             selectedEditorColor = firstUsedColor(project) ?: 0,
             editorRevision = state.editorRevision + 1,
+            editorStatsRevision = state.editorStatsRevision + 1,
         )
         scheduleSave(immediate = true)
     }
@@ -443,7 +554,11 @@ class DouGridViewModel(application: Application) : AndroidViewModel(application)
             } else project
         }
         if (!found) return
-        _uiState.value = state.copy(projects = projects, editorRevision = state.editorRevision + 1)
+        _uiState.value = state.copy(
+            projects = projects,
+            editorRevision = state.editorRevision + 1,
+            editorStatsRevision = state.editorStatsRevision + 1,
+        )
         scheduleSave(delayMillis = saveDelay)
     }
 

@@ -51,6 +51,7 @@ data class AppSettings(
     val highContrastGrid: Boolean = false,
     val keepScreenOnInCraftMode: Boolean = true,
     val confirmInventoryDeduction: Boolean = true,
+    val hasSeenTutorial: Boolean = false,
 )
 
 data class PersistedAppState(

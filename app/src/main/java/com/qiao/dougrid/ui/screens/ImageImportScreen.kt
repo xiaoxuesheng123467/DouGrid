@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Tune
@@ -49,6 +50,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -63,7 +65,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -73,14 +74,74 @@ import com.qiao.dougrid.DouGridUiState
 import com.qiao.dougrid.DouGridViewModel
 import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.core.ConversionMode
+import com.qiao.dougrid.core.CropRegion
 import com.qiao.dougrid.core.PatternGrid
 import com.qiao.dougrid.image.BitmapPatternConverter
 import com.qiao.dougrid.image.ImageImportOptions
 import com.qiao.dougrid.image.PhotoSamplingMode
 import com.qiao.dougrid.ui.components.PatternThumbnail
+import com.qiao.dougrid.ui.components.CropSelectionOverlay
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlin.math.abs
+
+private enum class ImportPreviewMode { PATTERN, ORIGINAL, CROP }
+
+internal class LeasedResource<T>(
+    val value: T,
+    private val disposer: (T) -> Unit,
+) {
+    private val lock = Any()
+    private var leaseCount = 0
+    private var retired = false
+    private var disposed = false
+
+    fun acquire(): Lease<T>? = synchronized(lock) {
+        if (retired || disposed) return@synchronized null
+        leaseCount += 1
+        Lease(value) { release() }
+    }
+
+    fun retire() {
+        val disposeNow = synchronized(lock) {
+            retired = true
+            markDisposedIfReady()
+        }
+        if (disposeNow) disposer(value)
+    }
+
+    private fun release() {
+        val disposeNow = synchronized(lock) {
+            check(leaseCount > 0) { "资源租约已全部释放" }
+            leaseCount -= 1
+            markDisposedIfReady()
+        }
+        if (disposeNow) disposer(value)
+    }
+
+    private fun markDisposedIfReady(): Boolean {
+        if (!retired || leaseCount != 0 || disposed) return false
+        disposed = true
+        return true
+    }
+
+    class Lease<T> internal constructor(
+        val value: T,
+        private val release: () -> Unit,
+    ) : AutoCloseable {
+        private val closed = AtomicBoolean(false)
+
+        override fun close() {
+            if (closed.compareAndSet(false, true)) release()
+        }
+    }
+}
 
 @Composable
 fun ImageImportScreen(
@@ -89,8 +150,10 @@ fun ImageImportScreen(
     viewModel: DouGridViewModel,
     onBack: () -> Unit,
 ) {
-    var preview by remember(uri) { mutableStateOf<Bitmap?>(null) }
-    var previewError by remember(uri) { mutableStateOf(false) }
+    var previewOwner by remember(uri) { mutableStateOf<LeasedResource<Bitmap>?>(null) }
+    val previewOwnerSlot = remember(uri) { AtomicReference<LeasedResource<Bitmap>?>(null) }
+    val preview = previewOwner?.value
+    var previewError by remember(uri) { mutableStateOf<String?>(null) }
     var title by rememberSaveable { mutableStateOf("图片图纸") }
     var modeName by rememberSaveable { mutableStateOf(ConversionMode.PHOTO.name) }
     var width by rememberSaveable { mutableIntStateOf(29) }
@@ -106,20 +169,39 @@ fun ImageImportScreen(
     var brightness by rememberSaveable { mutableFloatStateOf(0f) }
     var contrast by rememberSaveable { mutableFloatStateOf(1f) }
     var saturation by rememberSaveable { mutableFloatStateOf(1f) }
-    var cropX by rememberSaveable { mutableFloatStateOf(0.5f) }
-    var cropY by rememberSaveable { mutableFloatStateOf(0.5f) }
+    var cropLeft by rememberSaveable(uri.toString()) { mutableFloatStateOf(0f) }
+    var cropTop by rememberSaveable(uri.toString()) { mutableFloatStateOf(0f) }
+    var cropRight by rememberSaveable(uri.toString()) { mutableFloatStateOf(1f) }
+    var cropBottom by rememberSaveable(uri.toString()) { mutableFloatStateOf(1f) }
+    var cropInitialized by rememberSaveable(uri.toString()) { mutableStateOf(false) }
+    var lastCropAspect by rememberSaveable(uri.toString()) { mutableFloatStateOf(Float.NaN) }
     var samplingName by rememberSaveable { mutableStateOf(PhotoSamplingMode.AVERAGE.name) }
     var edgeStrength by rememberSaveable { mutableFloatStateOf(0.2f) }
     var advanced by rememberSaveable { mutableStateOf(false) }
-    var showOriginal by rememberSaveable { mutableStateOf(false) }
+    var previewModeName by rememberSaveable { mutableStateOf(ImportPreviewMode.PATTERN.name) }
     var patternPreview by remember(uri) { mutableStateOf<PatternGrid?>(null) }
     var patternPreviewError by remember(uri) { mutableStateOf<String?>(null) }
     var isPreviewing by remember(uri) { mutableStateOf(false) }
+    val patternPreviewGeneration = remember(uri) { AtomicLong(0L) }
     val mode = ConversionMode.valueOf(modeName)
     val samplingMode = PhotoSamplingMode.valueOf(samplingName)
     val inventoryColorCount = state.inventory.count { it.paletteId == paletteId && it.onHand > 0 }
     val inventoryEntries = state.inventory.filter { it.paletteId == paletteId && it.onHand > 0 }
     val targetPalette = viewModel.palette(paletteId)
+    val previewMode = ImportPreviewMode.valueOf(previewModeName)
+    val cropRegion = CropRegion(cropLeft, cropTop, cropRight, cropBottom).normalized()
+    val updateCropRegion: (CropRegion) -> Unit = { updated ->
+        val safe = updated.normalized()
+        cropLeft = safe.left
+        cropTop = safe.top
+        cropRight = safe.right
+        cropBottom = safe.bottom
+    }
+    val resetCrop: () -> Unit = {
+        preview?.let { source ->
+            updateCropRegion(CropRegion.forAspect(source.width, source.height, width.toFloat() / height.coerceAtLeast(1)))
+        }
+    }
     val options = ImageImportOptions(
         width = width.coerceIn(8, 256),
         height = height.coerceIn(8, 256),
@@ -131,31 +213,65 @@ fun ImageImportScreen(
         brightness = brightness,
         contrast = contrast,
         saturation = saturation,
-        cropX = cropX,
-        cropY = cropY,
+        cropRegion = cropRegion,
         useInventoryOnly = inventoryOnly,
         photoSamplingMode = samplingMode,
         edgeStrength = edgeStrength,
     )
 
     LaunchedEffect(uri) {
-        previewError = false
-        runCatching { BitmapPatternConverter.loadPreview(viewModel.getApplication(), uri) }
-            .onSuccess { preview = it }
-            .onFailure { previewError = true }
+        previewError = null
+        var loaded: Bitmap? = null
+        try {
+            loaded = BitmapPatternConverter.loadPreview(viewModel.getApplication(), uri)
+            currentCoroutineContext().ensureActive()
+            val owner = LeasedResource(checkNotNull(loaded)) { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+            loaded = null
+            previewOwnerSlot.getAndSet(owner)?.retire()
+            previewOwner = owner
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            previewError = error.message ?: "无法预览图片"
+        } finally {
+            loaded?.let { bitmap ->
+                if (!bitmap.isRecycled) bitmap.recycle()
+            }
+        }
     }
-    DisposableEffect(preview) {
-        val bitmap = preview
-        onDispose { bitmap?.recycle() }
+    DisposableEffect(previewOwnerSlot) {
+        onDispose {
+            previewOwnerSlot.getAndSet(null)?.retire()
+        }
     }
     DisposableEffect(viewModel) {
         onDispose { viewModel.cancelImageImport() }
     }
-    LaunchedEffect(preview, paletteId, options, inventoryEntries) {
+    LaunchedEffect(preview?.width, preview?.height, width.toFloat() / height.coerceAtLeast(1)) {
         val source = preview ?: return@LaunchedEffect
+        val targetAspect = width.toFloat() / height.coerceAtLeast(1)
+        when {
+            !cropInitialized -> {
+                updateCropRegion(CropRegion.forAspect(source.width, source.height, targetAspect))
+                cropInitialized = true
+            }
+            lastCropAspect.isFinite() && abs(lastCropAspect - targetAspect) >= 0.001f -> {
+                updateCropRegion(cropRegion.withAspectAroundCenter(source.width, source.height, targetAspect))
+            }
+        }
+        lastCropAspect = targetAspect
+    }
+    LaunchedEffect(previewOwner, paletteId, options, inventoryEntries) {
+        val owner = previewOwner ?: return@LaunchedEffect
+        val generation = patternPreviewGeneration.incrementAndGet()
         if (width !in 8..256 || height !in 8..256) {
-            patternPreview = null
-            patternPreviewError = "尺寸需要在 8–256 之间"
+            if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
+                patternPreview = null
+                patternPreviewError = "尺寸需要在 8–256 之间"
+                isPreviewing = false
+            }
             return@LaunchedEffect
         }
         isPreviewing = true
@@ -166,19 +282,34 @@ fun ImageImportScreen(
             if (inventoryOnly && (allowed == null || allowed.size < 2)) {
                 error("豆仓里至少要有两种当前色卡的颜色")
             }
-            patternPreview = BitmapPatternConverter.convertBitmap(
-                source = source,
-                palette = targetPalette,
-                options = options,
-                allowedPaletteIndices = allowed,
-            )
+            val lease = owner.acquire() ?: return@LaunchedEffect
+            lease.use {
+                val converted = BitmapPatternConverter.convertBitmap(
+                    source = lease.value,
+                    palette = targetPalette,
+                    options = options,
+                    allowedPaletteIndices = allowed,
+                )
+                if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
+                    patternPreview = converted
+                }
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (error: Throwable) {
-            patternPreview = null
-            patternPreviewError = error.message ?: "预览生成失败"
+        } catch (_: OutOfMemoryError) {
+            if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
+                patternPreview = null
+                patternPreviewError = "图片太大，预览内存不足。请缩小图片尺寸后重试。"
+            }
+        } catch (error: Exception) {
+            if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
+                patternPreview = null
+                patternPreviewError = error.message ?: "预览生成失败"
+            }
         } finally {
-            isPreviewing = false
+            if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
+                isPreviewing = false
+            }
         }
     }
 
@@ -199,7 +330,6 @@ fun ImageImportScreen(
                         title = title,
                         paletteId = paletteId,
                         options = options,
-                        previewGrid = patternPreview,
                     )
                 },
                 enabled = !state.isProcessingImage && !isPreviewing && patternPreview != null && width in 8..256 && height in 8..256,
@@ -228,12 +358,13 @@ fun ImageImportScreen(
                         previewError = previewError,
                         patternPreviewError = patternPreviewError,
                         isPreviewing = isPreviewing,
-                        showOriginal = showOriginal,
-                        onShowOriginal = { showOriginal = it },
+                        previewMode = previewMode,
+                        onPreviewMode = { previewModeName = it.name },
                         width = width,
                         height = height,
-                        cropX = cropX,
-                        cropY = cropY,
+                        cropRegion = cropRegion,
+                        onCropRegion = updateCropRegion,
+                        onResetCrop = resetCrop,
                         modifier = Modifier.weight(0.46f).fillMaxSize().padding(16.dp),
                     )
                     ImportControls(
@@ -266,13 +397,9 @@ fun ImageImportScreen(
                         brightness = brightness,
                         contrast = contrast,
                         saturation = saturation,
-                        cropX = cropX,
-                        cropY = cropY,
                         onBrightness = { brightness = it },
                         onContrast = { contrast = it },
                         onSaturation = { saturation = it },
-                        onCropX = { cropX = it },
-                        onCropY = { cropY = it },
                         samplingMode = samplingMode,
                         onSamplingMode = { samplingName = it.name },
                         edgeStrength = edgeStrength,
@@ -292,12 +419,13 @@ fun ImageImportScreen(
                             previewError = previewError,
                             patternPreviewError = patternPreviewError,
                             isPreviewing = isPreviewing,
-                            showOriginal = showOriginal,
-                            onShowOriginal = { showOriginal = it },
+                            previewMode = previewMode,
+                            onPreviewMode = { previewModeName = it.name },
                             width = width,
                             height = height,
-                            cropX = cropX,
-                            cropY = cropY,
+                            cropRegion = cropRegion,
+                            onCropRegion = updateCropRegion,
+                            onResetCrop = resetCrop,
                             modifier = Modifier.fillMaxWidth().aspectRatio(1.1f).padding(horizontal = 16.dp, vertical = 10.dp),
                         )
                     }
@@ -332,13 +460,9 @@ fun ImageImportScreen(
                             brightness = brightness,
                             contrast = contrast,
                             saturation = saturation,
-                            cropX = cropX,
-                            cropY = cropY,
                             onBrightness = { brightness = it },
                             onContrast = { contrast = it },
                             onSaturation = { saturation = it },
-                            onCropX = { cropX = it },
-                            onCropY = { cropY = it },
                             samplingMode = samplingMode,
                             onSamplingMode = { samplingName = it.name },
                             edgeStrength = edgeStrength,
@@ -359,15 +483,16 @@ private fun ImportPreview(
     sourcePreview: Bitmap?,
     patternPreview: PatternGrid?,
     palette: BeadPalette,
-    previewError: Boolean,
+    previewError: String?,
     patternPreviewError: String?,
     isPreviewing: Boolean,
-    showOriginal: Boolean,
-    onShowOriginal: (Boolean) -> Unit,
+    previewMode: ImportPreviewMode,
+    onPreviewMode: (ImportPreviewMode) -> Unit,
     width: Int,
     height: Int,
-    cropX: Float,
-    cropY: Float,
+    cropRegion: CropRegion,
+    onCropRegion: (CropRegion) -> Unit,
+    onResetCrop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val recognizedColors = remember(patternPreview, palette) {
@@ -379,11 +504,15 @@ private fun ImportPreview(
     }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
         SingleChoiceSegmentedButtonRow(modifier = Modifier.align(Alignment.CenterHorizontally)) {
-            listOf(false to "图纸", true to "原图").forEachIndexed { index, (original, label) ->
+            listOf(
+                ImportPreviewMode.PATTERN to "图纸",
+                ImportPreviewMode.ORIGINAL to "原图",
+                ImportPreviewMode.CROP to "裁剪",
+            ).forEachIndexed { index, (mode, label) ->
                 SegmentedButton(
-                    selected = showOriginal == original,
-                    onClick = { onShowOriginal(original) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = 2),
+                    selected = previewMode == mode,
+                    onClick = { onPreviewMode(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = 3),
                     label = { Text(label) },
                 )
             }
@@ -397,11 +526,13 @@ private fun ImportPreview(
             contentAlignment = Alignment.Center,
         ) {
             val targetAspect = width.coerceAtLeast(1).toFloat() / height.coerceAtLeast(1)
+            val sourceAspect = sourcePreview?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: targetAspect
+            val displayAspect = if (previewMode == ImportPreviewMode.PATTERN) targetAspect else sourceAspect
             val containerAspect = maxWidth.value / maxHeight.value.coerceAtLeast(1f)
-            val viewportModifier = if (targetAspect >= containerAspect) {
-                Modifier.fillMaxWidth().aspectRatio(targetAspect)
+            val viewportModifier = if (displayAspect >= containerAspect) {
+                Modifier.fillMaxWidth().aspectRatio(displayAspect)
             } else {
-                Modifier.fillMaxHeight().aspectRatio(targetAspect)
+                Modifier.fillMaxHeight().aspectRatio(displayAspect)
             }
             Box(
                 modifier = viewportModifier
@@ -410,18 +541,18 @@ private fun ImportPreview(
                 contentAlignment = Alignment.Center,
             ) {
                 when {
-                    previewError -> Text("无法预览图片", color = MaterialTheme.colorScheme.error)
-                    showOriginal && sourcePreview != null -> Image(
+                    previewError != null -> Text(
+                        previewError,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                    previewMode != ImportPreviewMode.PATTERN && sourcePreview != null -> Image(
                         bitmap = sourcePreview.asImageBitmap(),
                         contentDescription = "原始图片",
-                        contentScale = ContentScale.Crop,
-                        alignment = BiasAlignment(
-                            horizontalBias = cropX.coerceIn(0f, 1f) * 2f - 1f,
-                            verticalBias = cropY.coerceIn(0f, 1f) * 2f - 1f,
-                        ),
+                        contentScale = ContentScale.FillBounds,
                         modifier = Modifier.fillMaxSize(),
                     )
-                    !showOriginal && patternPreview != null -> PatternThumbnail(
+                    previewMode == ImportPreviewMode.PATTERN && patternPreview != null -> PatternThumbnail(
                         grid = patternPreview,
                         palette = palette,
                         revision = patternPreview.hashCode().toLong(),
@@ -433,6 +564,16 @@ private fun ImportPreview(
                         modifier = Modifier.padding(16.dp),
                     )
                     else -> CircularProgressIndicator()
+                }
+                if (previewMode == ImportPreviewMode.CROP && sourcePreview != null && previewError == null) {
+                    CropSelectionOverlay(
+                        region = cropRegion,
+                        sourceWidth = sourcePreview.width,
+                        sourceHeight = sourcePreview.height,
+                        targetAspect = targetAspect,
+                        onRegionChange = onCropRegion,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
             }
             if (isPreviewing) {
@@ -448,7 +589,22 @@ private fun ImportPreview(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.align(Alignment.CenterHorizontally),
         )
-        if (recognizedColors.isNotEmpty()) {
+        if (previewMode == ImportPreviewMode.CROP && sourcePreview != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Default.CropFree, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.size(7.dp))
+                Text(
+                    "拖动框内移动，拖动四角缩放；框外拖动可重画",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = onResetCrop) { Text("重置") }
+            }
+        }
+        if (previewMode == ImportPreviewMode.PATTERN && recognizedColors.isNotEmpty()) {
             Text(
                 text = "自动识别型号",
                 style = MaterialTheme.typography.labelMedium,
@@ -514,13 +670,9 @@ private fun ImportControls(
     brightness: Float,
     contrast: Float,
     saturation: Float,
-    cropX: Float,
-    cropY: Float,
     onBrightness: (Float) -> Unit,
     onContrast: (Float) -> Unit,
     onSaturation: (Float) -> Unit,
-    onCropX: (Float) -> Unit,
-    onCropY: (Float) -> Unit,
     samplingMode: PhotoSamplingMode,
     onSamplingMode: (PhotoSamplingMode) -> Unit,
     edgeStrength: Float,
@@ -617,8 +769,6 @@ private fun ImportControls(
             ValueSlider("亮度", String.format(Locale.US, "%+.2f", brightness), brightness, -0.35f..0.35f, 28, onBrightness)
             ValueSlider("对比度", String.format(Locale.US, "%.2f", contrast), contrast, 0.55f..1.55f, 20, onContrast)
             ValueSlider("饱和度", String.format(Locale.US, "%.2f", saturation), saturation, 0f..1.8f, 18, onSaturation)
-            ValueSlider("水平取景", "${(cropX * 100).toInt()}%", cropX, 0f..1f, 20, onCropX)
-            ValueSlider("垂直取景", "${(cropY * 100).toInt()}%", cropY, 0f..1f, 20, onCropY)
         }
         Spacer(Modifier.height(88.dp))
     }
