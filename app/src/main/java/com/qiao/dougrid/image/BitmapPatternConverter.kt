@@ -13,6 +13,7 @@ import androidx.exifinterface.media.ExifInterface
 import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.core.ConversionMode
 import com.qiao.dougrid.core.CropRegion
+import com.qiao.dougrid.core.InventoryMode
 import com.qiao.dougrid.core.PatternGrid
 import com.qiao.dougrid.core.QuantizeOptions
 import com.qiao.dougrid.core.Quantizer
@@ -46,7 +47,7 @@ data class ImageImportOptions(
     val contrast: Float = 1f,
     val saturation: Float = 1f,
     val cropRegion: CropRegion = CropRegion.FULL,
-    val useInventoryOnly: Boolean = false,
+    val inventoryMode: InventoryMode? = null,
     val photoSamplingMode: PhotoSamplingMode = PhotoSamplingMode.AVERAGE,
     val edgeStrength: Float = 0.2f,
 )
@@ -160,6 +161,7 @@ object BitmapPatternConverter {
         palette: BeadPalette,
         options: ImageImportOptions,
         allowedPaletteIndices: IntArray? = null,
+        paletteCapacities: IntArray? = null,
     ): PatternGrid {
         require(options.width in 8..256 && options.height in 8..256)
         val multiplier = if (options.mode == ConversionMode.PHOTO) 4 else 1
@@ -180,6 +182,7 @@ object BitmapPatternConverter {
                     palette,
                     options.copy(cropRegion = CropRegion.FULL),
                     allowedPaletteIndices,
+                    paletteCapacities,
                 )
             } finally {
                 source.recycle()
@@ -197,6 +200,7 @@ object BitmapPatternConverter {
         palette: BeadPalette,
         options: ImageImportOptions,
         allowedPaletteIndices: IntArray? = null,
+        paletteCapacities: IntArray? = null,
         referenceMaxSide: Int = 1_600,
     ): PreparedImageImport {
         require(options.width in 8..256 && options.height in 8..256)
@@ -230,6 +234,7 @@ object BitmapPatternConverter {
                     palette = palette,
                     options = options.copy(cropRegion = CropRegion.FULL),
                     allowedPaletteIndices = allowedPaletteIndices,
+                    paletteCapacities = paletteCapacities,
                 )
                 val reference = withBitmapHandoff(Dispatchers.Default) {
                     copyScaledToFit(source, referenceWidth, referenceHeight)
@@ -250,6 +255,7 @@ object BitmapPatternConverter {
         palette: BeadPalette,
         options: ImageImportOptions,
         allowedPaletteIndices: IntArray? = null,
+        paletteCapacities: IntArray? = null,
     ): PatternGrid = withContext(Dispatchers.Default) {
         require(options.width in 8..256 && options.height in 8..256)
         val conversionContext = currentCoroutineContext()
@@ -277,6 +283,8 @@ object BitmapPatternConverter {
                     ditherStrength = options.ditherStrength,
                     cleanupIslandSize = options.cleanupIslandSize,
                     removeLightBackground = options.removeLightBackground,
+                    paletteCapacities = paletteCapacities,
+                    inventoryMode = options.inventoryMode ?: InventoryMode.BEST_EFFORT,
                 ),
                 allowedPaletteIndices = allowedPaletteIndices,
                 cancellationCheck = { conversionContext.ensureActive() },

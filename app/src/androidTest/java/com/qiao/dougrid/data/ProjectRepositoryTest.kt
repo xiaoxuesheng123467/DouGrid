@@ -5,7 +5,10 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.qiao.dougrid.core.EMPTY_CELL
+import com.qiao.dougrid.core.PatternGrid
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -20,6 +23,157 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class ProjectRepositoryTest {
+    @Test
+    fun schemaOneLoadsWithMigrationDefaultsAndSavesAsSchemaTwo() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val state = stateFile(context)
+        clearStateFile(state)
+        val original = sampleState(
+            project = sampleProject().copy(
+                boardSize = 40,
+                craftElapsedSeconds = 99,
+                lastCraftBoardIndex = 3,
+                tags = listOf("礼物"),
+                folder = "生日",
+            ),
+            settings = AppSettings(defaultBoardSize = 40, lowStockThreshold = 12),
+        )
+
+        try {
+            ProjectRepository(context).save(original)
+            val legacyRoot = JSONObject(state.readText()).apply {
+                put("schema", 1)
+                getJSONObject("settings").apply {
+                    remove("defaultBoardSize")
+                    remove("lowStockThreshold")
+                }
+                getJSONArray("projects").getJSONObject(0).apply {
+                    remove("boardSize")
+                    remove("craftElapsedSeconds")
+                    remove("lastCraftBoardIndex")
+                    remove("tags")
+                    remove("folder")
+                }
+            }
+            state.writeText(legacyRoot.toString())
+
+            val repository = ProjectRepository(context)
+            val migrated = repository.load()
+
+            assertEquals(BeadProject.DEFAULT_BOARD_SIZE, migrated.projects.single().boardSize)
+            assertEquals(0L, migrated.projects.single().craftElapsedSeconds)
+            assertTrue(migrated.projects.single().tags.isEmpty())
+            assertNull(migrated.projects.single().folder)
+            assertEquals(BeadProject.DEFAULT_BOARD_SIZE, migrated.settings.defaultBoardSize)
+            assertEquals(300, migrated.settings.lowStockThreshold)
+            assertTrue(repository.loadIssues.isEmpty())
+
+            repository.save(migrated)
+            assertEquals(2, JSONObject(state.readText()).getInt("schema"))
+        } finally {
+            clearStateFile(state)
+        }
+    }
+
+    @Test
+    fun unreadableStateThrowsAndBlocksAnAccidentalOverwrite() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val state = stateFile(context)
+        clearStateFile(state)
+        val invalidContents = "{not valid json"
+        state.writeText(invalidContents)
+        val repository = ProjectRepository(context)
+
+        try {
+            val loadFailure = runCatching { repository.load() }.exceptionOrNull()
+            assertTrue(loadFailure is ProjectRepositoryLoadException)
+
+            val saveFailure = runCatching { repository.save(sampleState()) }.exceptionOrNull()
+            assertTrue(saveFailure is ProjectRepositorySaveBlockedException)
+            assertEquals(invalidContents, state.readText())
+        } finally {
+            clearStateFile(state)
+        }
+    }
+
+    @Test
+    fun unsupportedSchemaThrowsAndBlocksAnAccidentalOverwrite() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val state = stateFile(context)
+        clearStateFile(state)
+        val unsupported = JSONObject().apply { put("schema", 99) }.toString()
+        state.writeText(unsupported)
+        val repository = ProjectRepository(context)
+
+        try {
+            val failure = runCatching { repository.load() }.exceptionOrNull()
+            assertTrue(failure is ProjectRepositoryLoadException)
+            assertTrue(failure?.cause is IllegalArgumentException)
+            assertTrue(runCatching { repository.save(sampleState()) }.exceptionOrNull() is ProjectRepositorySaveBlockedException)
+            assertEquals(unsupported, state.readText())
+        } finally {
+            clearStateFile(state)
+        }
+    }
+
+    @Test
+    fun damagedProjectIsReportedAndPreservedWhileValidProjectsRemainUsable() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val state = stateFile(context)
+        clearStateFile(state)
+        val valid = sampleProject()
+
+        try {
+            ProjectRepository(context).save(sampleState(valid))
+            val root = JSONObject(state.readText())
+            root.getJSONArray("projects").put(
+                JSONObject().apply {
+                    put("id", "damaged-project")
+                    put("title", "必须保留的损坏记录")
+                    put("width", 2)
+                    put("height", 2)
+                    put("cells", "not-a-grid")
+                    put("recoveryMarker", "keep-me")
+                },
+            )
+            state.writeText(root.toString())
+
+            val repository = ProjectRepository(context)
+            val loaded = repository.load()
+            assertEquals(listOf(valid.id), loaded.projects.map(BeadProject::id))
+            assertEquals(1, repository.loadIssues.size)
+            assertEquals("projects", repository.loadIssues.single().section)
+            assertEquals(1, repository.loadIssues.single().index)
+
+            repository.save(loaded)
+            val savedProjects = JSONObject(state.readText()).getJSONArray("projects")
+            assertEquals(2, savedProjects.length())
+            assertEquals("keep-me", savedProjects.getJSONObject(1).getString("recoveryMarker"))
+        } finally {
+            clearStateFile(state)
+        }
+    }
+
+    @Test
+    fun referencePngWriteFailureIsPropagated() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val repository = ProjectRepository(context)
+        val projectId = UUID.randomUUID().toString()
+        val collision = File(context.filesDir, "project-sources/$projectId-reference.png")
+        collision.mkdirs()
+
+        try {
+            val failure = runCatching {
+                repository.saveReferencePng(byteArrayOf(1, 2, 3), projectId)
+            }.exceptionOrNull()
+            assertNotNull(failure)
+            assertTrue(collision.isDirectory)
+        } finally {
+            collision.deleteRecursively()
+            File("${collision.path}.bak").delete()
+        }
+    }
+
     @Test
     fun referenceCopyAndCleanupStayInsideManagedDirectory() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Application>()
@@ -132,4 +286,33 @@ class ProjectRepositoryTest {
             if (!Regex("[A-Za-z0-9_-]{1,128}").matches(projectId)) return@mapNotNull null
             File(directory, baseName).absolutePath
         }.distinct()
+
+    private fun sampleProject(id: String = UUID.randomUUID().toString()): BeadProject = BeadProject(
+        id = id,
+        title = "仓储测试",
+        paletteId = "mard-221",
+        grid = PatternGrid(
+            width = 2,
+            height = 1,
+            cells = intArrayOf(0, EMPTY_CELL),
+            completed = byteArrayOf(1, 0),
+        ),
+    )
+
+    private fun sampleState(
+        project: BeadProject = sampleProject(),
+        settings: AppSettings = AppSettings(),
+    ): PersistedAppState = PersistedAppState(
+        projects = listOf(project),
+        inventory = listOf(InventoryEntry("mard-221", "A1", 500)),
+        settings = settings,
+    )
+
+    private fun stateFile(context: Application): File = File(context.filesDir, "dougrid-state-v1.json")
+
+    private fun clearStateFile(file: File) {
+        file.delete()
+        File("${file.path}.bak").delete()
+        File("${file.path}.new").delete()
+    }
 }

@@ -2,6 +2,7 @@ package com.qiao.dougrid.ui.components
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
@@ -9,6 +10,7 @@ import androidx.compose.foundation.gestures.transformable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -21,12 +23,27 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.core.EMPTY_CELL
+import com.qiao.dougrid.core.GridRegion
 import com.qiao.dougrid.core.PatternGrid
 import com.qiao.dougrid.data.EditorTool
 import kotlin.math.floor
@@ -53,21 +70,85 @@ fun PatternCanvas(
     selectedColorIndex: Int = 0,
     showColorCodes: Boolean = true,
     highContrastGrid: Boolean = false,
+    boardSize: Int = 29,
     highlightColorIndex: Int? = null,
     hideCompleted: Boolean = false,
     window: GridWindow? = null,
     referenceImage: ImageBitmap? = null,
     referenceAlpha: Float = 0f,
+    selection: GridRegion? = null,
     onStrokeStart: () -> Unit = {},
     onStroke: (List<Int>) -> Unit = {},
     onStrokeEnd: () -> Unit = {},
     onCellAction: (Int) -> Unit = {},
+    onSelectionChange: (GridRegion?) -> Unit = {},
 ) {
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
     var scale by remember(grid.width, grid.height, window) { mutableFloatStateOf(1f) }
     var pan by remember(grid.width, grid.height, window) { mutableStateOf(Offset.Zero) }
     val gridWindow = window ?: GridWindow(0, 0, grid.width, grid.height)
+    val keyboardWindowLeft = gridWindow.startColumn.coerceIn(0, grid.width - 1)
+    val keyboardWindowTop = gridWindow.startRow.coerceIn(0, grid.height - 1)
+    val keyboardWindowRight = (gridWindow.startColumn.toLong() + gridWindow.width)
+        .coerceIn((keyboardWindowLeft + 1).toLong(), grid.width.toLong()).toInt()
+    val keyboardWindowBottom = (gridWindow.startRow.toLong() + gridWindow.height)
+        .coerceIn((keyboardWindowTop + 1).toLong(), grid.height.toLong()).toInt()
+    val keyboardWindowWidth = keyboardWindowRight - keyboardWindowLeft
+    val keyboardWindowHeight = keyboardWindowBottom - keyboardWindowTop
+    var keyboardCursor by remember(grid, gridWindow) {
+        mutableIntStateOf(grid.indexOf(keyboardWindowLeft, keyboardWindowTop))
+    }
+    var hasKeyboardFocus by remember { mutableStateOf(false) }
     val canTransform = mode != PatternCanvasMode.PREVIEW && tool == EditorTool.PAN
+    fun moveKeyboardCursor(columnDelta: Int, rowDelta: Int) {
+        val column = (keyboardCursor % grid.width + columnDelta)
+            .coerceIn(keyboardWindowLeft, keyboardWindowRight - 1)
+        val row = (keyboardCursor / grid.width + rowDelta)
+            .coerceIn(keyboardWindowTop, keyboardWindowBottom - 1)
+        keyboardCursor = grid.indexOf(column, row)
+    }
+    fun moveKeyboardCursorLinear(delta: Int) {
+        val localColumn = keyboardCursor % grid.width - keyboardWindowLeft
+        val localRow = keyboardCursor / grid.width - keyboardWindowTop
+        val localIndex = (localRow * keyboardWindowWidth + localColumn + delta)
+            .coerceIn(0, keyboardWindowWidth * keyboardWindowHeight - 1)
+        keyboardCursor = grid.indexOf(
+            keyboardWindowLeft + localIndex % keyboardWindowWidth,
+            keyboardWindowTop + localIndex / keyboardWindowWidth,
+        )
+    }
+    fun activateKeyboardCursor(): Boolean {
+        if (mode == PatternCanvasMode.PREVIEW) return false
+        if (mode == PatternCanvasMode.EDIT && tool == EditorTool.PAN) return false
+        if (mode == PatternCanvasMode.EDIT && tool == EditorTool.SELECT) {
+            onSelectionChange(
+                GridRegion(
+                    left = keyboardCursor % grid.width,
+                    top = keyboardCursor / grid.width,
+                    width = 1,
+                    height = 1,
+                ),
+            )
+            return true
+        }
+        onCellAction(keyboardCursor)
+        return true
+    }
+    val cursorColor = grid.cells[keyboardCursor]
+    val beadCount = remember(grid, revision) { grid.beadCount() }
+    val completedCount = remember(grid, revision) { grid.completedCount() }
+    val cursorDescription = if (cursorColor == EMPTY_CELL) {
+        "空白"
+    } else {
+        palette.colors.getOrNull(cursorColor)?.code ?: "未知颜色"
+    }
+    val canvasDescription = when (mode) {
+        PatternCanvasMode.EDIT -> "图纸编辑画布"
+        PatternCanvasMode.CRAFT -> "开拼进度画布"
+        PatternCanvasMode.PREVIEW -> "图纸预览"
+    }
+    val panAccessibilityMode = mode == PatternCanvasMode.EDIT && tool == EditorTool.PAN
+    val cellActionable = mode != PatternCanvasMode.PREVIEW && !panAccessibilityMode
     val transformState = rememberTransformableState { centroid, zoomChange, panChange, _ ->
         val updatedScale = (scale * zoomChange).coerceIn(0.7f, 18f)
         val ratio = updatedScale / scale
@@ -142,6 +223,44 @@ fun PatternCanvas(
                     }
                 }
             }
+        tool == EditorTool.SELECT -> Modifier
+            .pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
+                var anchor: Int? = null
+                fun updateSelection(current: Int?) {
+                    val start = anchor ?: return
+                    current ?: return
+                    onSelectionChange(
+                        GridRegion.fromCellCorners(
+                            firstColumn = start % grid.width,
+                            firstRow = start / grid.width,
+                            secondColumn = current % grid.width,
+                            secondRow = current / grid.width,
+                        ),
+                    )
+                }
+                detectDragGestures(
+                    orientationLock = null,
+                    onDragStart = { down, slopTriggerChange, _ ->
+                        anchor = mapToCell(down.position, canvasSize, grid, gridWindow, scale, pan)
+                            ?: mapToCell(slopTriggerChange.position, canvasSize, grid, gridWindow, scale, pan)
+                        updateSelection(anchor)
+                    },
+                    onDrag = { change, _ ->
+                        updateSelection(mapToCell(change.position, canvasSize, grid, gridWindow, scale, pan))
+                        change.consume()
+                    },
+                    onDragEnd = { anchor = null },
+                    onDragCancel = { anchor = null },
+                )
+            }
+            .pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
+                detectTapGestures { position ->
+                    val index = mapToCell(position, canvasSize, grid, gridWindow, scale, pan)
+                    onSelectionChange(
+                        index?.let { GridRegion(left = it % grid.width, top = it / grid.width, width = 1, height = 1) },
+                    )
+                }
+            }
         tool != EditorTool.PAN -> Modifier.pointerInput(grid, gridWindow, tool, scale, pan, canvasSize) {
             detectTapGestures { position ->
                 mapToCell(position, canvasSize, grid, gridWindow, scale, pan)?.let(onCellAction)
@@ -153,6 +272,66 @@ fun PatternCanvas(
     Canvas(
         modifier = modifier
             .background(Color(0xFFF0F3F1))
+            .semantics {
+                contentDescription = "$canvasDescription，${grid.width} 列 ${grid.height} 行"
+                stateDescription = if (panAccessibilityMode) {
+                    "已完成 $completedCount / $beadCount 颗；画布缩放 ${(scale * 100).toInt()}%"
+                } else {
+                    "已完成 $completedCount / $beadCount 颗；当前第 ${keyboardCursor / grid.width + 1} 行第 ${keyboardCursor % grid.width + 1} 列，$cursorDescription"
+                }
+                role = if (cellActionable) Role.Button else Role.Image
+                if (cellActionable) {
+                    onClick(label = "操作当前格") { activateKeyboardCursor() }
+                    customActions = listOf(
+                        CustomAccessibilityAction("上一个格子") {
+                            moveKeyboardCursorLinear(-1)
+                            true
+                        },
+                        CustomAccessibilityAction("下一个格子") {
+                            moveKeyboardCursorLinear(1)
+                            true
+                        },
+                    )
+                } else if (panAccessibilityMode) {
+                    customActions = listOf(
+                        CustomAccessibilityAction("放大画布") {
+                            scale = (scale * 1.25f).coerceAtMost(18f)
+                            true
+                        },
+                        CustomAccessibilityAction("缩小画布") {
+                            scale = (scale / 1.25f).coerceAtLeast(0.7f)
+                            true
+                        },
+                        CustomAccessibilityAction("重置画布视图") {
+                            scale = 1f
+                            pan = Offset.Zero
+                            true
+                        },
+                    )
+                }
+            }
+            .onFocusChanged { hasKeyboardFocus = it.isFocused }
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown || mode == PatternCanvasMode.PREVIEW) return@onKeyEvent false
+                if (panAccessibilityMode) {
+                    return@onKeyEvent when (event.key) {
+                        Key.DirectionLeft -> pan.plus(Offset(-32f, 0f)).let { pan = it; true }
+                        Key.DirectionRight -> pan.plus(Offset(32f, 0f)).let { pan = it; true }
+                        Key.DirectionUp -> pan.plus(Offset(0f, -32f)).let { pan = it; true }
+                        Key.DirectionDown -> pan.plus(Offset(0f, 32f)).let { pan = it; true }
+                        else -> false
+                    }
+                }
+                when (event.key) {
+                    Key.DirectionLeft -> moveKeyboardCursor(-1, 0).let { true }
+                    Key.DirectionRight -> moveKeyboardCursor(1, 0).let { true }
+                    Key.DirectionUp -> moveKeyboardCursor(0, -1).let { true }
+                    Key.DirectionDown -> moveKeyboardCursor(0, 1).let { true }
+                    Key.Enter, Key.NumPadEnter, Key.Spacebar -> activateKeyboardCursor()
+                    else -> false
+                }
+            }
+            .focusable(enabled = mode != PatternCanvasMode.PREVIEW)
             .onSizeChanged { canvasSize = it }
             .then(gestureModifier)
             .transformable(transformState, enabled = canTransform),
@@ -167,10 +346,21 @@ fun PatternCanvas(
             selectedColorIndex = selectedColorIndex,
             showColorCodes = showColorCodes,
             highContrastGrid = highContrastGrid,
+            boardSize = boardSize.coerceAtLeast(1),
             highlightColorIndex = highlightColorIndex,
             hideCompleted = hideCompleted,
             referenceImage = referenceImage,
             referenceAlpha = referenceAlpha,
+            selection = selection ?: if (hasKeyboardFocus) {
+                GridRegion(
+                    left = keyboardCursor % grid.width,
+                    top = keyboardCursor / grid.width,
+                    width = 1,
+                    height = 1,
+                )
+            } else {
+                null
+            },
             revision = revision,
         )
     }
@@ -182,6 +372,7 @@ fun PatternThumbnail(
     palette: BeadPalette,
     revision: Long,
     modifier: Modifier = Modifier,
+    boardSize: Int = 29,
 ) {
     PatternCanvas(
         grid = grid,
@@ -190,6 +381,7 @@ fun PatternThumbnail(
         modifier = modifier,
         mode = PatternCanvasMode.PREVIEW,
         showColorCodes = false,
+        boardSize = boardSize,
     )
 }
 
@@ -204,10 +396,12 @@ private fun DrawScope.drawPattern(
     selectedColorIndex: Int,
     showColorCodes: Boolean,
     highContrastGrid: Boolean,
+    boardSize: Int,
     highlightColorIndex: Int?,
     hideCompleted: Boolean,
     referenceImage: ImageBitmap?,
     referenceAlpha: Float,
+    selection: GridRegion?,
     revision: Long,
 ) {
     val baseCell = min(size.width / window.width, size.height / window.height)
@@ -277,15 +471,15 @@ private fun DrawScope.drawPattern(
         val guide = Color.Black.copy(alpha = if (highContrastGrid) 0.58f else 0.3f)
         for (localColumn in 0..window.width) {
             val absolute = window.startColumn + localColumn
-            val color = if (absolute % 5 == 0 || absolute % 29 == 0) guide else normal
-            val stroke = if (absolute % 29 == 0) 2.2f else if (absolute % 5 == 0) 1.2f else 0.65f
+            val color = if (absolute % 5 == 0 || absolute % boardSize == 0) guide else normal
+            val stroke = if (absolute % boardSize == 0) 2.2f else if (absolute % 5 == 0) 1.2f else 0.65f
             val x = origin.x + localColumn * cell
             drawLine(color, Offset(x, origin.y), Offset(x, origin.y + boardHeight), strokeWidth = stroke)
         }
         for (localRow in 0..window.height) {
             val absolute = window.startRow + localRow
-            val color = if (absolute % 5 == 0 || absolute % 29 == 0) guide else normal
-            val stroke = if (absolute % 29 == 0) 2.2f else if (absolute % 5 == 0) 1.2f else 0.65f
+            val color = if (absolute % 5 == 0 || absolute % boardSize == 0) guide else normal
+            val stroke = if (absolute % boardSize == 0) 2.2f else if (absolute % 5 == 0) 1.2f else 0.65f
             val y = origin.y + localRow * cell
             drawLine(color, Offset(origin.x, y), Offset(origin.x + boardWidth, y), strokeWidth = stroke)
         }
@@ -296,6 +490,26 @@ private fun DrawScope.drawPattern(
         size = Size(boardWidth, boardHeight),
         style = Stroke(width = 2f),
     )
+    selection?.let { region ->
+        val left = max(region.left, window.startColumn)
+        val top = max(region.top, window.startRow)
+        val right = min(region.rightExclusive, window.startColumn + window.width)
+        val bottom = min(region.bottomExclusive, window.startRow + window.height)
+        if (right > left && bottom > top) {
+            val selectionTopLeft = Offset(
+                origin.x + (left - window.startColumn) * cell,
+                origin.y + (top - window.startRow) * cell,
+            )
+            val selectionSize = Size((right - left) * cell, (bottom - top) * cell)
+            drawRect(Color(0x22006B64), topLeft = selectionTopLeft, size = selectionSize)
+            drawRect(
+                color = Color(0xFF006B64),
+                topLeft = selectionTopLeft,
+                size = selectionSize,
+                style = Stroke(width = max(2f, cell * 0.08f)),
+            )
+        }
+    }
 }
 
 private fun DrawScope.drawCompletionMark(topLeft: Offset, cell: Float) {

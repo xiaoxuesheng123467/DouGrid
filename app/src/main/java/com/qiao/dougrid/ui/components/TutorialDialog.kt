@@ -53,7 +53,7 @@ private val tutorialPages = listOf(
     TutorialPage(
         icon = Icons.Default.PhotoLibrary,
         title = "导入一张图片",
-        body = "从首页点“图片”选择本机文件，或直接拍照。豆格会读取原图方向并生成实时预览。",
+        body = "从首页点“导入图片”选择本机文件，或直接拍照。豆格会读取原图方向并生成实时预览。",
         tips = listOf("支持常见照片格式", "图片只在本机处理"),
     ),
     TutorialPage(
@@ -71,7 +71,7 @@ private val tutorialPages = listOf(
     TutorialPage(
         icon = Icons.Default.Inventory2,
         title = "备料并开始拼",
-        body = "生成图纸后会自动列出豆子型号、颗数、库存缺口和购买袋数，再按 29 × 29 实体板跟做。",
+        body = "生成图纸后会自动列出豆子型号、颗数、库存缺口和购买袋数，再按项目设置的实体板尺寸跟做。",
         tips = listOf("先在豆仓填写现有数量", "右上角问号可再次打开教程"),
     ),
 )

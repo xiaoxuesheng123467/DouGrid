@@ -60,4 +60,28 @@ class MaterialPlannerTest {
         assertTrue(text.contains("缺少：2 颗，1 个型号"))
         assertTrue(!text.contains("B02  缺"))
     }
+
+    @Test
+    fun substitutionRequiresEnoughSurplusForTheWholeSourceColor() {
+        val project = BeadProject(
+            title = "替色测试",
+            paletteId = palette.id,
+            grid = PatternGrid(4, 1, intArrayOf(0, 0, 0, 1)),
+        )
+
+        val enough = MaterialPlanner.substitutionSuggestions(
+            project,
+            palette,
+            listOf(InventoryEntry(palette.id, "B02", onHand = 4)),
+        )
+        assertEquals(1, enough.getValue(0).single().replacementColorIndex)
+        assertEquals(3, enough.getValue(0).single().beadCount)
+
+        val insufficient = MaterialPlanner.substitutionSuggestions(
+            project,
+            palette,
+            listOf(InventoryEntry(palette.id, "B02", onHand = 3)),
+        )
+        assertTrue(insufficient[0].isNullOrEmpty())
+    }
 }

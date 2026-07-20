@@ -380,6 +380,167 @@ class QuantizerTest {
         }
     }
 
+    @Test
+    fun strictInventoryUsesExactCapacitiesAndKeepsTheLowestErrorAssignments() {
+        val blackWhite = paletteOf(
+            ColorMath.argb(0, 0, 0),
+            ColorMath.argb(255, 255, 255),
+        )
+        val result = Quantizer.quantize(
+            pixels = intArrayOf(
+                ColorMath.argb(0, 0, 0),
+                ColorMath.argb(72, 72, 72),
+                ColorMath.argb(255, 255, 255),
+            ),
+            width = 3,
+            height = 1,
+            palette = blackWhite,
+            options = QuantizeOptions(
+                mode = ConversionMode.SPRITE,
+                maxColors = 2,
+                cleanupIslandSize = 0,
+                paletteCapacities = intArrayOf(1, 2),
+                inventoryMode = InventoryMode.STRICT,
+            ),
+        )
+
+        assertContentEquals(intArrayOf(0, 1, 1), result.cells)
+        assertEquals(1, result.cells.count { it == 0 })
+        assertEquals(2, result.cells.count { it == 1 })
+    }
+
+    @Test
+    fun insufficientInventoryIsEmptyInStrictModeAndMinimalOverflowInBestEffortMode() {
+        val pixels = intArrayOf(
+            ColorMath.argb(255, 0, 0),
+            ColorMath.argb(255, 0, 0),
+            ColorMath.argb(255, 0, 0),
+            ColorMath.argb(0, 255, 0),
+            ColorMath.argb(0, 255, 0),
+            ColorMath.argb(0, 255, 0),
+        )
+        val capacities = intArrayOf(1, 1, 0, 0)
+        val strict = Quantizer.quantize(
+            pixels = pixels,
+            width = 6,
+            height = 1,
+            palette = palette,
+            options = QuantizeOptions(
+                mode = ConversionMode.SPRITE,
+                maxColors = 2,
+                cleanupIslandSize = 0,
+                paletteCapacities = capacities,
+                inventoryMode = InventoryMode.STRICT,
+            ),
+        )
+        val bestEffort = Quantizer.quantize(
+            pixels = pixels,
+            width = 6,
+            height = 1,
+            palette = palette,
+            options = QuantizeOptions(
+                mode = ConversionMode.SPRITE,
+                maxColors = 2,
+                cleanupIslandSize = 0,
+                paletteCapacities = capacities,
+                inventoryMode = InventoryMode.BEST_EFFORT,
+            ),
+        )
+
+        assertEquals(2, strict.cells.count { it != EMPTY_CELL })
+        assertTrue(strict.cells.count { it == 0 } <= capacities[0])
+        assertTrue(strict.cells.count { it == 1 } <= capacities[1])
+        assertTrue(bestEffort.cells.all { it != EMPTY_CELL })
+        val overflow = bestEffort.cells
+            .filter { it != EMPTY_CELL }
+            .groupingBy { it }
+            .eachCount()
+            .entries
+            .sumOf { (paletteIndex, count) -> (count - capacities[paletteIndex]).coerceAtLeast(0) }
+        assertEquals(4, overflow)
+    }
+
+    @Test
+    fun transparentCellsDoNotConsumeStrictInventory() {
+        val result = Quantizer.quantize(
+            pixels = intArrayOf(
+                ColorMath.argb(255, 0, 0, alpha = 0),
+                ColorMath.argb(255, 0, 0),
+                ColorMath.argb(255, 0, 0),
+            ),
+            width = 3,
+            height = 1,
+            palette = palette,
+            options = QuantizeOptions(
+                mode = ConversionMode.SPRITE,
+                maxColors = 1,
+                cleanupIslandSize = 0,
+                paletteCapacities = intArrayOf(2, 0, 0, 0),
+                inventoryMode = InventoryMode.STRICT,
+            ),
+        )
+
+        assertContentEquals(intArrayOf(EMPTY_CELL, 0, 0), result.cells)
+    }
+
+    @Test
+    fun inventoryConstrainedDitheringIsDeterministic() {
+        val blackWhite = paletteOf(
+            ColorMath.argb(0, 0, 0),
+            ColorMath.argb(255, 255, 255),
+        )
+        val pixels = IntArray(63) { index ->
+            val value = (index * 37) and 0xFF
+            ColorMath.argb(value, value, value)
+        }
+        val options = QuantizeOptions(
+            mode = ConversionMode.PHOTO,
+            maxColors = 2,
+            ditherStrength = 0.8f,
+            cleanupIslandSize = 1,
+            paletteCapacities = intArrayOf(12, 17),
+            inventoryMode = InventoryMode.BEST_EFFORT,
+        )
+        val expected = Quantizer.quantize(pixels, 9, 7, blackWhite, options)
+
+        repeat(8) {
+            val actual = Quantizer.quantize(pixels, 9, 7, blackWhite, options)
+            assertContentEquals(expected.selectedPaletteIndices, actual.selectedPaletteIndices)
+            assertContentEquals(expected.cells, actual.cells)
+        }
+    }
+
+    @Test
+    fun inventoryModeDoesNotChangeLegacyQuantizationWithoutCapacities() {
+        val pixels = IntArray(48) { index ->
+            ColorMath.argb(
+                red = (index * 23) and 0xFF,
+                green = (index * 47) and 0xFF,
+                blue = (index * 71) and 0xFF,
+            )
+        }
+        val options = QuantizeOptions(
+            mode = ConversionMode.PHOTO,
+            maxColors = 3,
+            ditherStrength = 0.65f,
+            cleanupIslandSize = 1,
+        )
+        val legacy = Quantizer.quantize(pixels, 8, 6, palette, options)
+        val explicitStrictWithoutCapacities = Quantizer.quantize(
+            pixels,
+            8,
+            6,
+            palette,
+            options.copy(inventoryMode = InventoryMode.STRICT),
+        )
+
+        assertContentEquals(
+            legacy.selectedPaletteIndices,
+            explicitStrictWithoutCapacities.selectedPaletteIndices,
+        )
+        assertContentEquals(legacy.cells, explicitStrictWithoutCapacities.cells)
+    }
+
     private fun grayscalePalette(): BeadPalette = paletteOf(
         ColorMath.argb(0, 0, 0),
         ColorMath.argb(51, 51, 51),

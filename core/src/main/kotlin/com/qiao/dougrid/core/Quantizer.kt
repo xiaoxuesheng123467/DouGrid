@@ -1,5 +1,6 @@
 package com.qiao.dougrid.core
 
+import java.util.PriorityQueue
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -8,6 +9,8 @@ import kotlin.math.sqrt
 
 enum class ConversionMode { PHOTO, SPRITE }
 
+enum class InventoryMode { STRICT, BEST_EFFORT }
+
 data class QuantizeOptions(
     val mode: ConversionMode = ConversionMode.PHOTO,
     val maxColors: Int = 32,
@@ -15,6 +18,8 @@ data class QuantizeOptions(
     val cleanupIslandSize: Int = 1,
     val removeLightBackground: Boolean = false,
     val backgroundLumaThreshold: Float = 0.94f,
+    val paletteCapacities: IntArray? = null,
+    val inventoryMode: InventoryMode = InventoryMode.BEST_EFFORT,
 )
 
 data class QuantizeResult(
@@ -40,7 +45,14 @@ object Quantizer {
         require(width > 0 && height > 0) { "Image dimensions must be positive" }
         require(pixels.size == width * height) { "Pixel count must match image dimensions" }
 
-        val available = if (allowedPaletteIndices == null) {
+        val paletteCapacities = options.paletteCapacities?.copyOf()?.also { capacities ->
+            require(capacities.size == palette.colors.size) {
+                "Palette capacity count must match palette color count"
+            }
+            require(capacities.all { it >= 0 }) { "Palette capacities must be non-negative" }
+        }
+
+        val allowed = if (allowedPaletteIndices == null) {
             palette.colors.indices.toList().toIntArray()
         } else {
             allowedPaletteIndices
@@ -50,6 +62,11 @@ object Quantizer {
                 .sorted()
                 .toList()
                 .toIntArray()
+        }
+        val available = if (paletteCapacities != null && options.inventoryMode == InventoryMode.STRICT) {
+            allowed.filter { paletteCapacities[it] > 0 }.toIntArray()
+        } else {
+            allowed
         }
         if (available.isEmpty()) {
             cancellationCheck()
@@ -92,7 +109,7 @@ object Quantizer {
         val paletteLabs = Array(palette.colors.size) { index ->
             ColorMath.toOklab(palette.colors[index].opaqueArgb)
         }
-        val selected = choosePaletteColors(
+        val initiallySelected = choosePaletteColors(
             sourceLabs = sourceLabs,
             width = width,
             height = height,
@@ -104,6 +121,18 @@ object Quantizer {
                 options.ditherStrength.isFinite() && options.ditherStrength > 0f,
             cancellationCheck = cancellationCheck,
         )
+        val selected = if (paletteCapacities == null) {
+            initiallySelected
+        } else {
+            ensureInventoryCapacitySelection(
+                selected = initiallySelected,
+                available = available,
+                limit = colorLimit,
+                opaqueCount = sourceLabs.count { it != null },
+                capacities = paletteCapacities,
+                cancellationCheck = cancellationCheck,
+            )
+        }
 
         if (selected.isEmpty()) {
             return QuantizeResult(IntArray(prepared.size) { EMPTY_CELL }, selected)
@@ -146,7 +175,174 @@ object Quantizer {
                 cancellationCheck = cancellationCheck,
             )
         }
+        if (paletteCapacities != null) {
+            applyInventoryConstraints(
+                cells = cells,
+                selected = selected,
+                capacities = paletteCapacities,
+                mode = options.inventoryMode,
+                sourceLabs = sourceLabs,
+                paletteLabs = paletteLabs,
+                cancellationCheck = cancellationCheck,
+            )
+        }
         return QuantizeResult(cells, selected)
+    }
+
+    private fun ensureInventoryCapacitySelection(
+        selected: IntArray,
+        available: IntArray,
+        limit: Int,
+        opaqueCount: Int,
+        capacities: IntArray,
+        cancellationCheck: () -> Unit,
+    ): IntArray {
+        if (selected.isEmpty() || opaqueCount == 0) return selected
+
+        val ranked = available.toList().sortedWith(
+            compareByDescending<Int> { capacities[it] }.thenBy { it },
+        )
+        val targetCapacity = ranked
+            .take(limit)
+            .sumOf { min(capacities[it], opaqueCount).toLong() }
+            .coerceAtMost(opaqueCount.toLong())
+        val result = selected.toMutableSet()
+
+        fun selectedCapacity(): Long = result.sumOf {
+            min(capacities[it], opaqueCount).toLong()
+        }
+
+        var currentCapacity = selectedCapacity()
+        while (currentCapacity < targetCapacity && result.size < limit) {
+            cancellationCheck()
+            val candidate = ranked.firstOrNull { it !in result } ?: break
+            result += candidate
+            currentCapacity += min(capacities[candidate], opaqueCount).toLong()
+        }
+        while (currentCapacity < targetCapacity) {
+            cancellationCheck()
+            val candidate = ranked.firstOrNull { it !in result } ?: break
+            val replacement = result.minWithOrNull(
+                compareBy<Int> { capacities[it] }.thenByDescending { it },
+            ) ?: break
+            val capacityGain = min(capacities[candidate], opaqueCount) -
+                min(capacities[replacement], opaqueCount)
+            if (capacityGain <= 0) break
+            result -= replacement
+            result += candidate
+            currentCapacity += capacityGain.toLong()
+        }
+        return result.sorted().toIntArray()
+    }
+
+    private fun applyInventoryConstraints(
+        cells: IntArray,
+        selected: IntArray,
+        capacities: IntArray,
+        mode: InventoryMode,
+        sourceLabs: Array<Oklab?>,
+        paletteLabs: Array<Oklab>,
+        cancellationCheck: () -> Unit,
+    ) {
+        if (selected.isEmpty()) return
+
+        val opaqueCount = sourceLabs.count { it != null }
+        val effectiveCapacities = IntArray(capacities.size)
+        selected.forEach { paletteIndex ->
+            effectiveCapacities[paletteIndex] = min(capacities[paletteIndex], opaqueCount)
+        }
+        val counts = IntArray(capacities.size)
+        cells.forEachIndexed { index, paletteIndex ->
+            if (index and 0x3FF == 0) cancellationCheck()
+            if (paletteIndex in counts.indices) counts[paletteIndex]++
+        }
+
+        val moves = PriorityQueue(
+            compareBy<InventoryMove> { it.colorErrorIncrease }
+                .thenBy { it.cellIndex }
+                .thenBy { it.targetPaletteIndex },
+        )
+
+        fun bestMove(cellIndex: Int): InventoryMove? {
+            val sourcePaletteIndex = cells[cellIndex]
+            if (sourcePaletteIndex !in counts.indices ||
+                counts[sourcePaletteIndex] <= effectiveCapacities[sourcePaletteIndex]
+            ) {
+                return null
+            }
+            val source = sourceLabs[cellIndex] ?: return null
+            val currentDistance = source.distanceSquared(paletteLabs[sourcePaletteIndex])
+            var bestTarget = -1
+            var bestIncrease = Double.POSITIVE_INFINITY
+            selected.forEach { targetPaletteIndex ->
+                if (targetPaletteIndex == sourcePaletteIndex ||
+                    counts[targetPaletteIndex] >= effectiveCapacities[targetPaletteIndex]
+                ) {
+                    return@forEach
+                }
+                val increase = source.distanceSquared(paletteLabs[targetPaletteIndex]) - currentDistance
+                if (increase < bestIncrease - DISTANCE_EPSILON ||
+                    abs(increase - bestIncrease) <= DISTANCE_EPSILON &&
+                    (bestTarget < 0 || targetPaletteIndex < bestTarget)
+                ) {
+                    bestTarget = targetPaletteIndex
+                    bestIncrease = increase
+                }
+            }
+            return if (bestTarget < 0) {
+                null
+            } else {
+                InventoryMove(cellIndex, bestTarget, bestIncrease)
+            }
+        }
+
+        cells.indices.forEach { index ->
+            if (index and 0x3FF == 0) cancellationCheck()
+            bestMove(index)?.let(moves::add)
+        }
+        var processedMoves = 0
+        while (moves.isNotEmpty()) {
+            if (processedMoves++ and 0x3FF == 0) cancellationCheck()
+            val candidate = moves.remove()
+            val sourcePaletteIndex = cells[candidate.cellIndex]
+            if (sourcePaletteIndex !in counts.indices ||
+                counts[sourcePaletteIndex] <= effectiveCapacities[sourcePaletteIndex]
+            ) {
+                continue
+            }
+            if (counts[candidate.targetPaletteIndex] >=
+                effectiveCapacities[candidate.targetPaletteIndex]
+            ) {
+                bestMove(candidate.cellIndex)?.let(moves::add)
+                continue
+            }
+            cells[candidate.cellIndex] = candidate.targetPaletteIndex
+            counts[sourcePaletteIndex]--
+            counts[candidate.targetPaletteIndex]++
+        }
+
+        if (mode == InventoryMode.STRICT) {
+            selected.forEach { paletteIndex ->
+                cancellationCheck()
+                val overflow = counts[paletteIndex] - effectiveCapacities[paletteIndex]
+                if (overflow <= 0) return@forEach
+                val drops = PriorityQueue(
+                    compareByDescending<InventoryDrop> { it.colorError }
+                        .thenByDescending { it.cellIndex },
+                )
+                cells.indices.forEach { index ->
+                    if (index and 0x3FF == 0) cancellationCheck()
+                    if (cells[index] == paletteIndex) {
+                        val colorError = sourceLabs[index]
+                            ?.distanceSquared(paletteLabs[paletteIndex])
+                            ?: Double.POSITIVE_INFINITY
+                        drops += InventoryDrop(index, colorError)
+                    }
+                }
+                repeat(overflow) { cells[drops.remove().cellIndex] = EMPTY_CELL }
+                counts[paletteIndex] -= overflow
+            }
+        }
     }
 
     private fun removeEdgeConnectedLightBackground(
@@ -867,6 +1063,14 @@ object Quantizer {
     }
 
     private data class PaletteDemand(val lab: Oklab, val weight: Double)
+
+    private data class InventoryMove(
+        val cellIndex: Int,
+        val targetPaletteIndex: Int,
+        val colorErrorIncrease: Double,
+    )
+
+    private data class InventoryDrop(val cellIndex: Int, val colorError: Double)
 
     private data class CellComponent(val color: Int, val cells: IntArray)
 

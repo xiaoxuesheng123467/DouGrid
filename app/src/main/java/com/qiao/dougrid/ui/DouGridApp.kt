@@ -6,8 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.GridView
@@ -22,6 +26,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -36,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.qiao.dougrid.DouGridUiState
@@ -60,6 +66,7 @@ private object Routes {
 @Composable
 fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
     val navController = rememberNavController()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val snackbar = remember { SnackbarHostState() }
     var pendingImportUri by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -77,18 +84,33 @@ fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
         viewModel.consumeOpenProjectRequest()
     }
 
-    Box(Modifier.fillMaxSize()) {
-        if (state.isLoading) {
-            Column(
-                modifier = Modifier.align(Alignment.Center),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                CircularProgressIndicator()
-                Text("豆格", style = MaterialTheme.typography.titleLarge)
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            state.persistenceWarning?.let { warning ->
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        warning,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
-        } else {
-            NavHost(navController = navController, startDestination = Routes.Main) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                if (state.isLoading) {
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        CircularProgressIndicator()
+                        Text("豆格", style = MaterialTheme.typography.titleLarge)
+                    }
+                } else {
+                    NavHost(navController = navController, startDestination = Routes.Main) {
                 composable(Routes.Main) {
                     MainWorkspace(
                         state = state,
@@ -142,9 +164,23 @@ fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
                         onBack = { navController.popBackStack() },
                     )
                 }
+                    }
+                }
             }
         }
-        SnackbarHost(hostState = snackbar, modifier = Modifier.align(Alignment.BottomCenter))
+        val currentRoute = currentBackStackEntry?.destination?.route
+        val snackbarBottomPadding = when {
+            currentRoute == Routes.Import -> 88.dp
+            currentRoute == Routes.Main && maxWidth < 760.dp -> 88.dp
+            else -> 16.dp
+        }
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(bottom = snackbarBottomPadding),
+        )
     }
     if (state.showTutorial) {
         TutorialDialog(onFinish = viewModel::completeTutorial)

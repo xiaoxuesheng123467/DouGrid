@@ -34,9 +34,9 @@ class MainActivitySmokeTest {
         composeRule.waitUntilAtLeastOneExists(hasText("作品"), timeoutMillis = 10_000)
 
         composeRule.onNodeWithText("豆格").assertIsDisplayed()
-        composeRule.onNodeWithText("图片").assertIsDisplayed()
+        composeRule.onNodeWithText("导入图片").assertIsDisplayed()
         composeRule.onNodeWithText("拍照").assertIsDisplayed()
-        composeRule.onNodeWithText("空白").assertIsDisplayed()
+        composeRule.onNodeWithText("空白图纸").assertIsDisplayed()
 
         composeRule.onNodeWithText("开拼").performClick()
         composeRule.onNodeWithText("总进度").assertIsDisplayed()
@@ -56,7 +56,7 @@ class MainActivitySmokeTest {
         composeRule.onNodeWithText("已识别豆子型号").assertIsDisplayed()
         composeRule.onNodeWithText("去豆仓补货").performClick()
 
-        composeRule.onNodeWithText("搜索色号").assertIsDisplayed()
+        composeRule.onNodeWithText("搜索色号、名称或色系").assertIsDisplayed()
         composeRule.onNodeWithText("郁金香杯垫").assertIsDisplayed()
     }
 
@@ -93,6 +93,17 @@ class MainActivitySmokeTest {
 
         assertNotEquals("Cell pixels should update before the finger is lifted", beforePixel, duringStrokePixel)
         canvas.performTouchInput { up() }
+    }
+
+    @Test
+    fun editorSelectionToolIsReachable() {
+        closeTutorialIfPresent()
+        composeRule.waitUntilAtLeastOneExists(hasText("郁金香杯垫"), timeoutMillis = 10_000)
+        composeRule.onNode(hasText("郁金香杯垫") and hasText("待开拼")).performClick()
+        composeRule.waitUntilAtLeastOneExists(hasContentDescription("框选"), timeoutMillis = 10_000)
+
+        composeRule.onNodeWithContentDescription("框选").performClick()
+        composeRule.onNodeWithContentDescription("框选").assertIsDisplayed()
     }
 
     private fun closeTutorialIfPresent() {

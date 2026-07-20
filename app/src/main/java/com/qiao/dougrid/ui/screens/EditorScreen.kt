@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -27,14 +27,23 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Backspace
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.RotateLeft
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Colorize
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.FormatColorFill
@@ -44,6 +53,8 @@ import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material3.AlertDialog
@@ -51,6 +62,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -61,6 +73,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -93,7 +106,10 @@ import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.EditorTool
 import com.qiao.dougrid.data.InventoryEntry
 import com.qiao.dougrid.export.MaterialPlanner
+import com.qiao.dougrid.export.MaterialSubstitution
 import com.qiao.dougrid.export.PatternExporter
+import com.qiao.dougrid.export.PdfExportOptions
+import com.qiao.dougrid.export.PdfPageOrientation
 import com.qiao.dougrid.export.PngExportOptions
 import com.qiao.dougrid.export.PngMode
 import com.qiao.dougrid.ui.components.PatternCanvas
@@ -102,6 +118,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.Locale
+
+private enum class EditorExportKind { PDF, PIXEL_PNG, GRID_PNG }
 
 @Composable
 fun EditorScreen(
@@ -118,8 +137,19 @@ fun EditorScreen(
     var showPalette by rememberSaveable { mutableStateOf(false) }
     var showRename by rememberSaveable { mutableStateOf(false) }
     var showMaterials by rememberSaveable { mutableStateOf(false) }
+    var showControlsSheet by rememberSaveable(project.id) { mutableStateOf(false) }
+    var showExportOptions by rememberSaveable { mutableStateOf(false) }
+    var exportKindName by rememberSaveable { mutableStateOf(EditorExportKind.PDF.name) }
     var referenceAlpha by rememberSaveable { mutableFloatStateOf(0f) }
-    var pendingPngMode by remember { mutableStateOf(PngMode.PIXEL_ART) }
+    var pendingPngModeName by rememberSaveable(project.id) { mutableStateOf(PngMode.PIXEL_ART.name) }
+    var pendingPngCellSize by rememberSaveable(project.id) { mutableStateOf(24) }
+    var pendingPngTransparent by rememberSaveable(project.id) { mutableStateOf(true) }
+    var pendingPdfBoardSize by rememberSaveable(project.id) { mutableStateOf<Int?>(project.boardSize) }
+    var pendingPdfSymbols by rememberSaveable(project.id) { mutableStateOf(true) }
+    var pendingPdfColorCodes by rememberSaveable(project.id) { mutableStateOf(true) }
+    var pendingPdfCalibration by rememberSaveable(project.id) { mutableStateOf(false) }
+    var pendingPdfOrientationName by rememberSaveable(project.id) { mutableStateOf(PdfPageOrientation.PORTRAIT.name) }
+    var pendingPdfPhysicalCellSizeMm by rememberSaveable(project.id) { mutableStateOf<Float?>(null) }
     val beadCount = remember(project.id, state.editorStatsRevision) { project.grid.beadCount() }
     val usedColors = remember(project.id, state.editorStatsRevision) {
         project.grid.colorCounts().entries
@@ -138,10 +168,22 @@ fun EditorScreen(
 
     val pdfLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
+        val exportProject = project.copy(grid = project.grid.deepCopy())
+        val options = PdfExportOptions(
+            boardSize = pendingPdfBoardSize,
+            showSymbols = pendingPdfSymbols,
+            showColorCodes = pendingPdfColorCodes,
+            showCalibrationMark = pendingPdfCalibration,
+            orientation = PdfPageOrientation.entries.firstOrNull { it.name == pendingPdfOrientationName }
+                ?: PdfPageOrientation.PORTRAIT,
+            physicalCellSizeMm = pendingPdfPhysicalCellSizeMm,
+        )
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    context.contentResolver.openOutputStream(uri)?.use { PatternExporter.exportPdf(project, palette, it) }
+                    context.contentResolver.openOutputStream(uri)?.use {
+                        PatternExporter.exportPdf(exportProject, palette, it, options)
+                    }
                         ?: error("无法写入文件")
                 }
             }.onSuccess { viewModel.showMessage("PDF 已导出") }
@@ -150,12 +192,17 @@ fun EditorScreen(
     }
     val pngLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
-        val mode = pendingPngMode
+        val exportProject = project.copy(grid = project.grid.deepCopy())
+        val options = PngExportOptions(
+            mode = PngMode.entries.firstOrNull { it.name == pendingPngModeName } ?: PngMode.PIXEL_ART,
+            requestedCellSizePx = pendingPngCellSize,
+            transparentEmptyCells = pendingPngTransparent,
+        )
         scope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri)?.use {
-                        PatternExporter.exportPng(project, palette, it, PngExportOptions(mode = mode))
+                        PatternExporter.exportPng(exportProject, palette, it, options)
                     } ?: error("无法写入文件")
                 }
             }.onSuccess { viewModel.showMessage("PNG 已导出") }
@@ -173,6 +220,8 @@ fun EditorScreen(
                             "${project.grid.width} × ${project.grid.height} · $beadCount 颗 · ${project.boardCount} 板",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
                 },
@@ -185,27 +234,33 @@ fun EditorScreen(
                         Icon(Icons.AutoMirrored.Filled.Redo, "重做")
                     }
                     Box {
-                        IconButton(onClick = { exportMenu = true }) { Icon(Icons.Default.FileDownload, "导出") }
+                        IconButton(onClick = { exportMenu = true }) { Icon(Icons.Default.MoreVert, "更多操作") }
                         DropdownMenu(expanded = exportMenu, onDismissRequest = { exportMenu = false }) {
                             DropdownMenuItem(
                                 text = { Text("PDF 图纸") },
                                 leadingIcon = { Icon(Icons.Default.GridOn, null) },
-                                onClick = { exportMenu = false; pdfLauncher.launch("$safeName-图纸.pdf") },
+                                onClick = {
+                                    exportMenu = false
+                                    exportKindName = EditorExportKind.PDF.name
+                                    showExportOptions = true
+                                },
                             )
                             DropdownMenuItem(
                                 text = { Text("像素 PNG") },
                                 leadingIcon = { Icon(Icons.Default.Image, null) },
                                 onClick = {
-                                    exportMenu = false; pendingPngMode = PngMode.PIXEL_ART
-                                    pngLauncher.launch("$safeName-像素图.png")
+                                    exportMenu = false
+                                    exportKindName = EditorExportKind.PIXEL_PNG.name
+                                    showExportOptions = true
                                 },
                             )
                             DropdownMenuItem(
                                 text = { Text("网格 PNG") },
                                 leadingIcon = { Icon(Icons.Default.GridOn, null) },
                                 onClick = {
-                                    exportMenu = false; pendingPngMode = PngMode.GRID_SHEET
-                                    pngLauncher.launch("$safeName-网格图.png")
+                                    exportMenu = false
+                                    exportKindName = EditorExportKind.GRID_PNG.name
+                                    showExportOptions = true
                                 },
                             )
                             DropdownMenuItem(
@@ -221,15 +276,23 @@ fun EditorScreen(
                                     }, "分享采购单"))
                                 },
                             )
+                            DropdownMenuItem(
+                                text = { Text("作品设置") },
+                                leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                onClick = {
+                                    exportMenu = false
+                                    showRename = true
+                                },
+                            )
                         }
                     }
-                    IconButton(onClick = { showRename = true }) { Icon(Icons.Default.MoreVert, "更多") }
                 },
             )
         },
     ) { padding ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(padding)) {
             val expanded = maxWidth >= 840.dp
+            val shortHeight = maxHeight < 560.dp
             if (expanded) {
                 Row(Modifier.fillMaxSize()) {
                     EditorCanvas(
@@ -253,7 +316,7 @@ fun EditorScreen(
                         onOpenPalette = { showPalette = true },
                         onMaterials = { showMaterials = true },
                         viewModel = viewModel,
-                        modifier = Modifier.width(330.dp).fillMaxHeight(),
+                        modifier = Modifier.width(330.dp).fillMaxHeight().verticalScroll(rememberScrollState()),
                     )
                 }
             } else {
@@ -267,21 +330,56 @@ fun EditorScreen(
                         viewModel = viewModel,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
-                    EditorControls(
-                        project = project,
-                        palette = palette,
-                        state = state,
-                        usedColors = usedColors,
-                        referenceAvailable = reference != null,
-                        referenceAlpha = referenceAlpha,
-                        onReferenceAlpha = { referenceAlpha = it },
-                        onOpenPalette = { showPalette = true },
-                        onMaterials = { showMaterials = true },
-                        viewModel = viewModel,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    if (shortHeight) {
+                        EditorCompactToolbar(
+                            selectedTool = state.editorTool,
+                            onSelectTool = viewModel::setEditorTool,
+                            onOpenTools = { showControlsSheet = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    } else {
+                        EditorControls(
+                            project = project,
+                            palette = palette,
+                            state = state,
+                            usedColors = usedColors,
+                            referenceAvailable = reference != null,
+                            referenceAlpha = referenceAlpha,
+                            onReferenceAlpha = { referenceAlpha = it },
+                            onOpenPalette = { showPalette = true },
+                            onMaterials = { showMaterials = true },
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState()),
+                        )
+                    }
                 }
             }
+        }
+    }
+
+    if (showControlsSheet) {
+        ModalBottomSheet(onDismissRequest = { showControlsSheet = false }) {
+            EditorControls(
+                project = project,
+                palette = palette,
+                state = state,
+                usedColors = usedColors,
+                referenceAvailable = reference != null,
+                referenceAlpha = referenceAlpha,
+                onReferenceAlpha = { referenceAlpha = it },
+                onOpenPalette = {
+                    showControlsSheet = false
+                    showPalette = true
+                },
+                onMaterials = {
+                    showControlsSheet = false
+                    showMaterials = true
+                },
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
+                    .verticalScroll(rememberScrollState()),
+            )
         }
     }
 
@@ -304,16 +402,195 @@ fun EditorScreen(
                 showMaterials = false
                 onOpenInventory(project.id)
             },
+            onSubstitute = { source, replacement ->
+                viewModel.substituteProjectColor(project.id, source, replacement)
+            },
             onDismiss = { showMaterials = false },
         )
     }
     if (showRename) {
-        RenameDialog(
-            current = project.title,
+        ProjectSettingsDialog(
+            project = project,
             onDismiss = { showRename = false },
-            onRename = { viewModel.renameProject(project.id, it); showRename = false },
+            onSave = { title, folder, tags, boardSize ->
+                viewModel.updateProjectMetadata(project.id, title, folder, tags, boardSize)
+                showRename = false
+            },
             onDuplicate = { viewModel.duplicateProject(project.id); showRename = false },
         )
+    }
+    if (showExportOptions) {
+        ExportOptionsDialog(
+            project = project,
+            initialKind = EditorExportKind.valueOf(exportKindName),
+            onDismiss = { showExportOptions = false },
+            onExport = { kind, pdfOptions, pngOptions ->
+                showExportOptions = false
+                when (kind) {
+                    EditorExportKind.PDF -> {
+                        pendingPdfBoardSize = pdfOptions.boardSize
+                        pendingPdfSymbols = pdfOptions.showSymbols
+                        pendingPdfColorCodes = pdfOptions.showColorCodes
+                        pendingPdfCalibration = pdfOptions.showCalibrationMark
+                        pendingPdfOrientationName = pdfOptions.orientation.name
+                        pendingPdfPhysicalCellSizeMm = pdfOptions.physicalCellSizeMm
+                        pdfLauncher.launch("$safeName-图纸.pdf")
+                    }
+                    EditorExportKind.PIXEL_PNG -> {
+                        pendingPngModeName = PngMode.PIXEL_ART.name
+                        pendingPngCellSize = pngOptions.requestedCellSizePx
+                        pendingPngTransparent = pngOptions.transparentEmptyCells
+                        pngLauncher.launch("$safeName-像素图.png")
+                    }
+                    EditorExportKind.GRID_PNG -> {
+                        pendingPngModeName = PngMode.GRID_SHEET.name
+                        pendingPngCellSize = pngOptions.requestedCellSizePx
+                        pendingPngTransparent = pngOptions.transparentEmptyCells
+                        pngLauncher.launch("$safeName-网格图.png")
+                    }
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ExportOptionsDialog(
+    project: BeadProject,
+    initialKind: EditorExportKind,
+    onDismiss: () -> Unit,
+    onExport: (EditorExportKind, PdfExportOptions, PngExportOptions) -> Unit,
+) {
+    var kindName by rememberSaveable(project.id, initialKind) { mutableStateOf(initialKind.name) }
+    var boardSizeText by rememberSaveable(project.id) { mutableStateOf(project.boardSize.toString()) }
+    var showSymbols by rememberSaveable(project.id) { mutableStateOf(true) }
+    var showColorCodes by rememberSaveable(project.id) { mutableStateOf(true) }
+    var showCalibration by rememberSaveable(project.id) { mutableStateOf(true) }
+    var orientationName by rememberSaveable(project.id) { mutableStateOf(PdfPageOrientation.PORTRAIT.name) }
+    var printOneToOne by rememberSaveable(project.id) { mutableStateOf(false) }
+    var cellSizeText by rememberSaveable(project.id) { mutableStateOf("24") }
+    var transparentEmpty by rememberSaveable(project.id) { mutableStateOf(true) }
+    val kind = EditorExportKind.valueOf(kindName)
+    val boardSize = boardSizeText.toIntOrNull()
+    val cellSize = cellSizeText.toIntOrNull()
+    val orientation = PdfPageOrientation.valueOf(orientationName)
+    val maxOneToOneBoardSize = if (orientation == PdfPageOrientation.PORTRAIT) 33 else 30
+    val valid = when (kind) {
+        EditorExportKind.PDF -> boardSize?.let {
+            it in BeadProject.MIN_BOARD_SIZE..BeadProject.MAX_BOARD_SIZE &&
+                (!printOneToOne || it <= maxOneToOneBoardSize)
+        } == true
+        EditorExportKind.PIXEL_PNG, EditorExportKind.GRID_PNG -> cellSize?.let { it in 1..256 } == true
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导出设置") },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    item {
+                        FilterChip(
+                            selected = kind == EditorExportKind.PDF,
+                            onClick = { kindName = EditorExportKind.PDF.name },
+                            label = { Text("PDF") },
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = kind == EditorExportKind.PIXEL_PNG,
+                            onClick = { kindName = EditorExportKind.PIXEL_PNG.name },
+                            label = { Text("像素 PNG") },
+                        )
+                    }
+                    item {
+                        FilterChip(
+                            selected = kind == EditorExportKind.GRID_PNG,
+                            onClick = { kindName = EditorExportKind.GRID_PNG.name },
+                            label = { Text("网格 PNG") },
+                        )
+                    }
+                }
+                if (kind == EditorExportKind.PDF) {
+                    OutlinedTextField(
+                        value = boardSizeText,
+                        onValueChange = { boardSizeText = it.filter(Char::isDigit).take(2) },
+                        label = { Text("每板边长（8–64）") },
+                        singleLine = true,
+                        isError = boardSize?.let { it !in BeadProject.MIN_BOARD_SIZE..BeadProject.MAX_BOARD_SIZE } != false,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = orientation == PdfPageOrientation.PORTRAIT,
+                            onClick = { orientationName = PdfPageOrientation.PORTRAIT.name },
+                            label = { Text("竖版") },
+                        )
+                        FilterChip(
+                            selected = orientation == PdfPageOrientation.LANDSCAPE,
+                            onClick = { orientationName = PdfPageOrientation.LANDSCAPE.name },
+                            label = { Text("横版") },
+                        )
+                    }
+                    ExportToggle("按 5 mm 标准豆 1:1 打印", printOneToOne) { printOneToOne = it }
+                    if (printOneToOne && (boardSize ?: 0) > maxOneToOneBoardSize) {
+                        Text(
+                            "当前方向最多容纳 $maxOneToOneBoardSize × $maxOneToOneBoardSize；请缩小每板边长或关闭 1:1。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    ExportToggle("显示定位符号", showSymbols) { showSymbols = it }
+                    ExportToggle("显示品牌色号", showColorCodes) { showColorCodes = it }
+                    ExportToggle("打印 25 mm 校准标记", showCalibration) { showCalibration = it }
+                } else {
+                    OutlinedTextField(
+                        value = cellSizeText,
+                        onValueChange = { cellSizeText = it.filter(Char::isDigit).take(3) },
+                        label = { Text("单格像素（1–256）") },
+                        supportingText = { Text("超出图片尺寸上限时会自动缩小") },
+                        singleLine = true,
+                        isError = cellSize?.let { it !in 1..256 } != false,
+                    )
+                    if (kind == EditorExportKind.PIXEL_PNG) {
+                        ExportToggle("空白格透明", transparentEmpty) { transparentEmpty = it }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = valid,
+                onClick = {
+                    onExport(
+                        kind,
+                        PdfExportOptions(
+                            boardSize = boardSize,
+                            showSymbols = showSymbols,
+                            showColorCodes = showColorCodes,
+                            showCalibrationMark = showCalibration,
+                            orientation = orientation,
+                            physicalCellSizeMm = if (printOneToOne) 5f else null,
+                        ),
+                        PngExportOptions(
+                            requestedCellSizePx = cellSize ?: 24,
+                            transparentEmptyCells = transparentEmpty,
+                        ),
+                    )
+                },
+            ) { Text("选择保存位置") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun ExportToggle(label: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 
@@ -379,13 +656,64 @@ private fun EditorCanvas(
         selectedColorIndex = state.selectedEditorColor,
         showColorCodes = state.settings.showColorCodes,
         highContrastGrid = state.settings.highContrastGrid,
+        boardSize = project.boardSize,
         referenceImage = reference,
         referenceAlpha = referenceAlpha,
+        selection = state.editorSelection,
         onStrokeStart = { viewModel.beginEditorStroke(project.id) },
         onStroke = { viewModel.extendEditorStroke(project.id, it) },
         onStrokeEnd = { viewModel.endEditorStroke(project.id) },
         onCellAction = { viewModel.applyToolAt(project.id, it) },
+        onSelectionChange = { viewModel.setEditorSelection(project.id, it) },
     )
+}
+
+@Composable
+private fun EditorCompactToolbar(
+    selectedTool: EditorTool,
+    onSelectTool: (EditorTool) -> Unit,
+    onOpenTools: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.background(MaterialTheme.colorScheme.surface).padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        LazyRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            item { CompactToolButton(EditorTool.PENCIL, selectedTool, Icons.Default.Edit, "画笔", onSelectTool) }
+            item { CompactToolButton(EditorTool.ERASER, selectedTool, Icons.AutoMirrored.Filled.Backspace, "橡皮", onSelectTool) }
+            item { CompactToolButton(EditorTool.FILL, selectedTool, Icons.Default.FormatColorFill, "填充", onSelectTool) }
+            item { CompactToolButton(EditorTool.PICKER, selectedTool, Icons.Default.Colorize, "吸色", onSelectTool) }
+            item { CompactToolButton(EditorTool.REPLACE, selectedTool, Icons.Default.FindReplace, "替换", onSelectTool) }
+            item { CompactToolButton(EditorTool.SELECT, selectedTool, Icons.Default.CropFree, "框选", onSelectTool) }
+            item { CompactToolButton(EditorTool.PAN, selectedTool, Icons.Default.PanTool, "移动", onSelectTool) }
+        }
+        IconButton(onClick = onOpenTools, modifier = Modifier.size(48.dp)) {
+            Icon(Icons.Default.Palette, contentDescription = "打开编辑工具")
+        }
+    }
+}
+
+@Composable
+private fun CompactToolButton(
+    tool: EditorTool,
+    selectedTool: EditorTool,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onSelectTool: (EditorTool) -> Unit,
+) {
+    if (tool == selectedTool) {
+        FilledTonalIconButton(onClick = { onSelectTool(tool) }, modifier = Modifier.size(48.dp)) {
+            Icon(icon, contentDescription = label)
+        }
+    } else {
+        IconButton(onClick = { onSelectTool(tool) }, modifier = Modifier.size(48.dp)) {
+            Icon(icon, contentDescription = label)
+        }
+    }
 }
 
 @Composable
@@ -406,13 +734,31 @@ private fun EditorControls(
         modifier = modifier.background(MaterialTheme.colorScheme.surface).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            ToolButton(EditorTool.PENCIL, state.editorTool, Icons.Default.Edit, "画笔", viewModel::setEditorTool)
-            ToolButton(EditorTool.ERASER, state.editorTool, Icons.AutoMirrored.Filled.Backspace, "橡皮", viewModel::setEditorTool)
-            ToolButton(EditorTool.FILL, state.editorTool, Icons.Default.FormatColorFill, "填充", viewModel::setEditorTool)
-            ToolButton(EditorTool.PICKER, state.editorTool, Icons.Default.Colorize, "吸色", viewModel::setEditorTool)
-            ToolButton(EditorTool.REPLACE, state.editorTool, Icons.Default.FindReplace, "替换", viewModel::setEditorTool)
-            ToolButton(EditorTool.PAN, state.editorTool, Icons.Default.PanTool, "移动", viewModel::setEditorTool)
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item { ToolButton(EditorTool.PENCIL, state.editorTool, Icons.Default.Edit, "画笔", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.ERASER, state.editorTool, Icons.AutoMirrored.Filled.Backspace, "橡皮", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.FILL, state.editorTool, Icons.Default.FormatColorFill, "填充", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.PICKER, state.editorTool, Icons.Default.Colorize, "吸色", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.REPLACE, state.editorTool, Icons.Default.FindReplace, "替换", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.SELECT, state.editorTool, Icons.Default.CropFree, "框选", viewModel::setEditorTool) }
+            item { ToolButton(EditorTool.PAN, state.editorTool, Icons.Default.PanTool, "移动", viewModel::setEditorTool) }
+        }
+        state.editorSelection?.let { region ->
+            SelectionControls(
+                width = region.width,
+                height = region.height,
+                onCopy = { viewModel.copyEditorSelection(project.id) },
+                onPaste = { viewModel.pasteEditorSelection(project.id) },
+                onClear = { viewModel.clearEditorSelection(project.id) },
+                onRotateClockwise = { viewModel.rotateEditorSelection(project.id, clockwise = true) },
+                onRotateCounterClockwise = { viewModel.rotateEditorSelection(project.id, clockwise = false) },
+                onMirrorHorizontal = { viewModel.mirrorEditorSelection(project.id, horizontal = true) },
+                onMirrorVertical = { viewModel.mirrorEditorSelection(project.id, horizontal = false) },
+                onMove = { column, row -> viewModel.moveEditorSelection(project.id, column, row) },
+            )
         }
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -468,6 +814,47 @@ private fun EditorControls(
 }
 
 @Composable
+private fun SelectionControls(
+    width: Int,
+    height: Int,
+    onCopy: () -> Unit,
+    onPaste: () -> Unit,
+    onClear: () -> Unit,
+    onRotateClockwise: () -> Unit,
+    onRotateCounterClockwise: () -> Unit,
+    onMirrorHorizontal: () -> Unit,
+    onMirrorVertical: () -> Unit,
+    onMove: (Int, Int) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("选区 $width × $height", style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f))
+            IconButton(onClick = { onMove(-1, 0) }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "左移选区")
+            }
+            IconButton(onClick = { onMove(0, -1) }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.KeyboardArrowUp, "上移选区")
+            }
+            IconButton(onClick = { onMove(0, 1) }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.KeyboardArrowDown, "下移选区")
+            }
+            IconButton(onClick = { onMove(1, 0) }, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "右移选区")
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            item { IconButton(onClick = onCopy) { Icon(Icons.Default.ContentCopy, "复制选区") } }
+            item { IconButton(onClick = onPaste) { Icon(Icons.Default.ContentPaste, "粘贴选区") } }
+            item { IconButton(onClick = onRotateCounterClockwise) { Icon(Icons.AutoMirrored.Filled.RotateLeft, "逆时针旋转选区") } }
+            item { IconButton(onClick = onRotateClockwise) { Icon(Icons.AutoMirrored.Filled.RotateRight, "顺时针旋转选区") } }
+            item { IconButton(onClick = onMirrorHorizontal) { Icon(Icons.Default.Flip, "水平镜像选区") } }
+            item { IconButton(onClick = onMirrorVertical) { Icon(Icons.Default.SwapVert, "垂直镜像选区") } }
+            item { IconButton(onClick = onClear) { Icon(Icons.Default.DeleteSweep, "清除选区") } }
+        }
+    }
+}
+
+@Composable
 private fun ToolButton(
     tool: EditorTool,
     selected: EditorTool,
@@ -477,9 +864,9 @@ private fun ToolButton(
 ) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (tool == selected) {
-            FilledTonalIconButton(onClick = { onSelect(tool) }, modifier = Modifier.size(40.dp)) { Icon(icon, label, modifier = Modifier.size(20.dp)) }
+            FilledTonalIconButton(onClick = { onSelect(tool) }, modifier = Modifier.size(48.dp)) { Icon(icon, label, modifier = Modifier.size(20.dp)) }
         } else {
-            IconButton(onClick = { onSelect(tool) }, modifier = Modifier.size(40.dp)) { Icon(icon, label, modifier = Modifier.size(20.dp)) }
+            IconButton(onClick = { onSelect(tool) }, modifier = Modifier.size(48.dp)) { Icon(icon, label, modifier = Modifier.size(20.dp)) }
         }
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
@@ -514,7 +901,7 @@ private fun PaletteSheet(
         search.isBlank() || color.code.contains(search, true) || color.name.contains(search, true) || color.group.contains(search, true)
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().height(520.dp).padding(horizontal = 16.dp)) {
+        Column(Modifier.fillMaxWidth().fillMaxHeight(0.85f).padding(horizontal = 16.dp)) {
             Text("${palette.title} · ${palette.colors.size} 色", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = search,
@@ -525,6 +912,7 @@ private fun PaletteSheet(
             )
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(68.dp),
+                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
@@ -559,9 +947,14 @@ private fun MaterialsSheet(
     beadCount: Int,
     statsRevision: Long,
     onOpenInventory: () -> Unit,
+    onSubstitute: (Int, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var pendingSubstitution by remember { mutableStateOf<MaterialSubstitution?>(null) }
     val materials = remember(project.id, statsRevision, inventory) { MaterialPlanner.plan(project, palette, inventory) }
+    val substitutions = remember(project.id, statsRevision, inventory) {
+        MaterialPlanner.substitutionSuggestions(project, palette, inventory, maxSuggestionsPerColor = 1)
+    }
     val totalShortage = materials.sumOf { it.shortage }
     val shortageColors = materials.count { it.shortage > 0 }
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -605,26 +998,127 @@ private fun MaterialsSheet(
                             color = if (item.bagsToBuy > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         )
                     }
+                    substitutions[item.colorIndex]?.firstOrNull()?.let { suggestion ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 40.dp, bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier.size(18.dp).clip(MaterialTheme.shapes.small)
+                                    .background(Color(suggestion.replacement.opaqueArgb)),
+                            )
+                            Spacer(Modifier.size(7.dp))
+                            Text(
+                                "可用 ${suggestion.replacement.code} 替代",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f),
+                            )
+                            TextButton(
+                                onClick = { pendingSubstitution = suggestion },
+                            ) { Text("预览") }
+                        }
+                    }
                     HorizontalDivider()
                 }
             }
         }
     }
+    pendingSubstitution?.let { suggestion ->
+        val sourceShortage = materials.firstOrNull { it.colorIndex == suggestion.sourceColorIndex }?.shortage ?: 0
+        AlertDialog(
+            onDismissRequest = { pendingSubstitution = null },
+            title = { Text("确认整色替换") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${suggestion.source.code} → ${suggestion.replacement.code}，共 ${suggestion.beadCount} 颗")
+                    Text(
+                        "总缺口 $totalShortage → ${(totalShortage - sourceShortage).coerceAtLeast(0)} 颗",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text("替换后 ${suggestion.replacement.code} 仍余 ${suggestion.replacementSurplus - suggestion.beadCount} 颗")
+                    Text(
+                        "色差评分 ${String.format(Locale.ROOT, "%.3f", suggestion.perceptualDistance)}，数值越低越接近。替换后仍可撤销。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSubstitute(suggestion.sourceColorIndex, suggestion.replacementColorIndex)
+                        pendingSubstitution = null
+                    },
+                ) { Text("确认替换") }
+            },
+            dismissButton = { TextButton(onClick = { pendingSubstitution = null }) { Text("取消") } },
+        )
+    }
 }
 
 @Composable
-private fun RenameDialog(
-    current: String,
+private fun ProjectSettingsDialog(
+    project: BeadProject,
     onDismiss: () -> Unit,
-    onRename: (String) -> Unit,
+    onSave: (String, String?, List<String>, Int) -> Unit,
     onDuplicate: () -> Unit,
 ) {
-    var title by rememberSaveable { mutableStateOf(current) }
+    var title by rememberSaveable(project.id) { mutableStateOf(project.title) }
+    var folder by rememberSaveable(project.id) { mutableStateOf(project.folder.orEmpty()) }
+    var tags by rememberSaveable(project.id) { mutableStateOf(project.tags.joinToString("，")) }
+    var boardSize by rememberSaveable(project.id) { mutableStateOf(project.boardSize.toString()) }
+    val parsedBoardSize = boardSize.toIntOrNull()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("作品设置") },
-        text = { OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("作品名称") }, singleLine = true) },
-        confirmButton = { Button(onClick = { onRename(title) }) { Text("保存") } },
+        text = {
+            Column(
+                modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it.take(512) },
+                    label = { Text("作品名称") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = folder,
+                    onValueChange = { folder = it.take(120) },
+                    label = { Text("文件夹") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = tags,
+                    onValueChange = { tags = it.take(240) },
+                    label = { Text("标签，用逗号分隔") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = boardSize,
+                    onValueChange = { boardSize = it.filter(Char::isDigit).take(2) },
+                    label = { Text("实体板边长（8–64）") },
+                    supportingText = { Text("当前图纸将按此尺寸重新分板") },
+                    singleLine = true,
+                    isError = parsedBoardSize?.let { it !in BeadProject.MIN_BOARD_SIZE..BeadProject.MAX_BOARD_SIZE } != false,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onSave(
+                        title,
+                        folder.takeIf(String::isNotBlank),
+                        tags.split(',', '，').map(String::trim).filter(String::isNotEmpty),
+                        checkNotNull(parsedBoardSize),
+                    )
+                },
+                enabled = title.isNotBlank() &&
+                    parsedBoardSize?.let { it in BeadProject.MIN_BOARD_SIZE..BeadProject.MAX_BOARD_SIZE } == true,
+            ) { Text("保存") }
+        },
         dismissButton = {
             Row {
                 TextButton(onClick = onDuplicate) { Text("创建副本") }

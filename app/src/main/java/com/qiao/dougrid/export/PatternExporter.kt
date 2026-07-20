@@ -26,6 +26,11 @@ enum class PngMode {
     GRID_SHEET,
 }
 
+enum class PdfPageOrientation {
+    PORTRAIT,
+    LANDSCAPE,
+}
+
 data class PngExportOptions(
     val mode: PngMode = PngMode.PIXEL_ART,
     val requestedCellSizePx: Int = 24,
@@ -36,6 +41,12 @@ data class PngExportOptions(
 
 data class PdfExportOptions(
     val bagSize: Int = 1_000,
+    val boardSize: Int? = null,
+    val showSymbols: Boolean = true,
+    val showColorCodes: Boolean = true,
+    val showCalibrationMark: Boolean = false,
+    val orientation: PdfPageOrientation = PdfPageOrientation.PORTRAIT,
+    val physicalCellSizeMm: Float? = null,
 )
 
 data class PdfExportResult(
@@ -43,6 +54,27 @@ data class PdfExportResult(
     val materialPageCount: Int,
     val boardPageCount: Int,
 )
+
+internal data class PdfExportPlan(
+    val boardSize: Int,
+    val boardColumns: Int,
+    val boardRows: Int,
+    val boardPageCount: Int,
+    val materialPageCount: Int,
+    val pageCount: Int,
+    val cellSizePoints: Float,
+    val orientation: PdfPageOrientation,
+    val physicalCellSizeMm: Float?,
+    val boardPageWidthPoints: Int,
+    val boardPageHeightPoints: Int,
+    val gridLeftPoints: Float,
+    val gridTopPoints: Float,
+    val showSymbols: Boolean,
+    val showColorCodes: Boolean,
+    val showCalibrationMark: Boolean,
+) {
+    val boardGridSizePoints: Float get() = cellSizePoints * boardSize
+}
 
 data class PngExportResult(
     val widthPx: Int,
@@ -67,7 +99,13 @@ data class MaterialRequirement(
 object PatternExporter {
     private const val PDF_WIDTH = 595
     private const val PDF_HEIGHT = 842
-    private const val BOARD_SIZE = BeadProject.BOARD_SIZE
+    private const val DEFAULT_PDF_CELL_SIZE = 16.25f
+    private const val DEFAULT_PDF_GRID_SIZE = DEFAULT_PDF_CELL_SIZE * BeadProject.DEFAULT_BOARD_SIZE
+    private const val LANDSCAPE_PDF_GRID_SIZE = 430f
+    private const val LANDSCAPE_GRID_AREA_LEFT = 42f
+    private const val LANDSCAPE_GRID_AREA_TOP = 88f
+    private const val CALIBRATION_MARK_MILLIMETERS = 25
+    private const val POINTS_PER_MILLIMETER = 72f / 25.4f
     private const val COVER_MATERIAL_CAPACITY = 25
     private const val MATERIAL_PAGE_CAPACITY = 35
     private const val HARD_MAX_PNG_DIMENSION = DEFAULT_PNG_MAX_DIMENSION_PX
@@ -79,7 +117,7 @@ object PatternExporter {
 
     /**
      * Exports an A4 portrait PDF. Page one contains project details and the first part of
-     * the material legend; remaining material pages precede one fixed 29 x 29 page per board.
+     * the material legend; remaining material pages precede one page per configured board.
      */
     @Throws(IOException::class)
     fun exportPdf(
@@ -88,17 +126,8 @@ object PatternExporter {
         output: OutputStream,
         options: PdfExportOptions = PdfExportOptions(),
     ): PdfExportResult {
-        require(options.bagSize > 0) { "Bag size must be positive" }
-        validate(project, palette)
-
         val materials = materials(project, palette, options.bagSize)
-        val continuationMaterialPages = pageCountAfterFirst(
-            itemCount = materials.size,
-            firstPageCapacity = COVER_MATERIAL_CAPACITY,
-            continuationCapacity = MATERIAL_PAGE_CAPACITY,
-        )
-        val materialPageCount = 1 + continuationMaterialPages
-        val totalPages = materialPageCount + project.boardCount
+        val plan = createPdfExportPlan(project, options, materials.size)
         val document = PdfDocument()
 
         try {
@@ -108,7 +137,10 @@ object PatternExporter {
                 palette = palette,
                 materials = materials.take(COVER_MATERIAL_CAPACITY),
                 bagSize = options.bagSize,
-                totalPages = totalPages,
+                boardColumns = plan.boardColumns,
+                boardRows = plan.boardRows,
+                boardPageCount = plan.boardPageCount,
+                totalPages = plan.pageCount,
             )
 
             materials.drop(COVER_MATERIAL_CAPACITY)
@@ -121,23 +153,24 @@ object PatternExporter {
                         palette = palette,
                         materials = pageMaterials,
                         pageNumber = pageNumber,
-                        totalPages = totalPages,
+                        totalPages = plan.pageCount,
                     )
                 }
 
             var boardOrdinal = 0
-            for (boardRow in 0 until project.boardRows) {
-                for (boardColumn in 0 until project.boardColumns) {
-                    val pageNumber = materialPageCount + boardOrdinal + 1
+            for (boardRow in 0 until plan.boardRows) {
+                for (boardColumn in 0 until plan.boardColumns) {
+                    val pageNumber = plan.materialPageCount + boardOrdinal + 1
                     addBoardPage(
                         document = document,
                         project = project,
                         palette = palette,
+                        plan = plan,
                         boardColumn = boardColumn,
                         boardRow = boardRow,
                         boardOrdinal = boardOrdinal,
                         pageNumber = pageNumber,
-                        totalPages = totalPages,
+                        totalPages = plan.pageCount,
                     )
                     boardOrdinal++
                 }
@@ -150,10 +183,20 @@ object PatternExporter {
         }
 
         return PdfExportResult(
-            pageCount = totalPages,
-            materialPageCount = materialPageCount,
-            boardPageCount = project.boardCount,
+            pageCount = plan.pageCount,
+            materialPageCount = plan.materialPageCount,
+            boardPageCount = plan.boardPageCount,
         )
+    }
+
+    internal fun pdfExportPlan(
+        project: BeadProject,
+        palette: BeadPalette,
+        options: PdfExportOptions = PdfExportOptions(),
+    ): PdfExportPlan {
+        require(options.bagSize > 0) { "Bag size must be positive" }
+        validate(project, palette)
+        return createPdfExportPlan(project, options, project.grid.colorCounts().size)
     }
 
     /**
@@ -297,6 +340,9 @@ object PatternExporter {
         palette: BeadPalette,
         materials: List<MaterialRequirement>,
         bagSize: Int,
+        boardColumns: Int,
+        boardRows: Int,
+        boardPageCount: Int,
         totalPages: Int,
     ) {
         val page = document.startPage(pageInfo(1))
@@ -342,7 +388,7 @@ object PatternExporter {
             drawSummaryValue(
                 canvas,
                 "拼板",
-                "${project.boardColumns} x ${project.boardRows} (${project.boardCount})",
+                "$boardColumns x $boardRows ($boardPageCount)",
                 58f,
                 183f,
                 235f,
@@ -454,26 +500,34 @@ object PatternExporter {
         document: PdfDocument,
         project: BeadProject,
         palette: BeadPalette,
+        plan: PdfExportPlan,
         boardColumn: Int,
         boardRow: Int,
         boardOrdinal: Int,
         pageNumber: Int,
         totalPages: Int,
     ) {
-        val page = document.startPage(pageInfo(pageNumber))
+        val page = document.startPage(
+            pageInfo(
+                pageNumber = pageNumber,
+                width = plan.boardPageWidthPoints,
+                height = plan.boardPageHeightPoints,
+            ),
+        )
         try {
             val canvas = page.canvas
             canvas.drawColor(Color.WHITE)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
             val symbols = colorSymbols(palette)
-            val startColumn = boardColumn * BOARD_SIZE
-            val startRow = boardRow * BOARD_SIZE
-            val endColumn = min(startColumn + BOARD_SIZE, project.grid.width)
-            val endRow = min(startRow + BOARD_SIZE, project.grid.height)
+            val pageRight = plan.boardPageWidthPoints - 42f
+            val startColumn = boardColumn * plan.boardSize
+            val startRow = boardRow * plan.boardSize
+            val endColumn = min(startColumn + plan.boardSize, project.grid.width)
+            val endRow = min(startRow + plan.boardSize, project.grid.height)
 
             drawText(
                 canvas,
-                "Board ${boardOrdinal + 1}/${project.boardCount}",
+                "Board ${boardOrdinal + 1}/${plan.boardPageCount}",
                 42f,
                 47f,
                 21f,
@@ -484,7 +538,7 @@ object PatternExporter {
             drawText(
                 canvas,
                 "Row ${boardRow + 1}, column ${boardColumn + 1}",
-                553f,
+                pageRight,
                 47f,
                 11f,
                 Color.rgb(75, 82, 88),
@@ -503,7 +557,7 @@ object PatternExporter {
             drawText(
                 canvas,
                 project.title,
-                553f,
+                pageRight,
                 71f,
                 10f,
                 Color.rgb(88, 94, 100),
@@ -512,10 +566,10 @@ object PatternExporter {
                 textAlign = Paint.Align.RIGHT,
             )
 
-            val cellSize = 16.25f
-            val gridSize = cellSize * BOARD_SIZE
-            val gridLeft = (PDF_WIDTH - gridSize) / 2f
-            val gridTop = 118f
+            val cellSize = plan.cellSizePoints
+            val gridSize = plan.boardGridSizePoints
+            val gridLeft = plan.gridLeftPoints
+            val gridTop = plan.gridTopPoints
             val gridRight = gridLeft + gridSize
             val gridBottom = gridTop + gridSize
 
@@ -524,6 +578,9 @@ object PatternExporter {
                 project = project,
                 palette = palette,
                 symbols = symbols,
+                boardSize = plan.boardSize,
+                showSymbols = plan.showSymbols,
+                showColorCodes = plan.showColorCodes,
                 startColumn = startColumn,
                 startRow = startRow,
                 gridLeft = gridLeft,
@@ -534,6 +591,7 @@ object PatternExporter {
             drawPdfCoordinates(
                 canvas = canvas,
                 project = project,
+                boardSize = plan.boardSize,
                 startColumn = startColumn,
                 startRow = startRow,
                 gridLeft = gridLeft,
@@ -545,6 +603,7 @@ object PatternExporter {
             )
             drawBoardGridLines(
                 canvas = canvas,
+                boardSize = plan.boardSize,
                 startColumn = startColumn,
                 startRow = startRow,
                 gridLeft = gridLeft,
@@ -553,11 +612,18 @@ object PatternExporter {
                 paint = paint,
             )
 
+            if (plan.showCalibrationMark) {
+                val calibrationRight = plan.boardPageWidthPoints - 42f
+                val calibrationY = if (plan.orientation == PdfPageOrientation.PORTRAIT) 609f else 500f
+                drawCalibrationMark(canvas, paint, calibrationRight, calibrationY)
+            }
+            val annotationBaseline =
+                if (plan.orientation == PdfPageOrientation.PORTRAIT) 632f else 548f
             drawText(
                 canvas,
-                "Bold guides follow absolute 5-cell boundaries. Each filled cell shows symbol and color code.",
+                boardAnnotationDescription(plan.showSymbols, plan.showColorCodes),
                 42f,
-                632f,
+                annotationBaseline,
                 9f,
                 Color.rgb(88, 94, 100),
                 paint,
@@ -567,11 +633,20 @@ object PatternExporter {
                 project = project,
                 palette = palette,
                 symbols = symbols,
+                boardSize = plan.boardSize,
+                orientation = plan.orientation,
                 startColumn = startColumn,
                 startRow = startRow,
                 paint = paint,
             )
-            drawPageFooter(canvas, pageNumber, totalPages, paint)
+            drawPageFooter(
+                canvas = canvas,
+                pageNumber = pageNumber,
+                totalPages = totalPages,
+                paint = paint,
+                pageWidth = plan.boardPageWidthPoints,
+                pageHeight = plan.boardPageHeightPoints,
+            )
         } finally {
             document.finishPage(page)
         }
@@ -582,6 +657,9 @@ object PatternExporter {
         project: BeadProject,
         palette: BeadPalette,
         symbols: Map<String, String>,
+        boardSize: Int,
+        showSymbols: Boolean,
+        showColorCodes: Boolean,
         startColumn: Int,
         startRow: Int,
         gridLeft: Float,
@@ -589,9 +667,9 @@ object PatternExporter {
         cellSize: Float,
         paint: Paint,
     ) {
-        for (localRow in 0 until BOARD_SIZE) {
+        for (localRow in 0 until boardSize) {
             val row = startRow + localRow
-            for (localColumn in 0 until BOARD_SIZE) {
+            for (localColumn in 0 until boardSize) {
                 val column = startColumn + localColumn
                 val left = gridLeft + localColumn * cellSize
                 val top = gridTop + localRow * cellSize
@@ -617,29 +695,59 @@ object PatternExporter {
                 canvas.drawRect(rect, paint)
 
                 val textColor = contrastingTextColor(color.opaqueArgb)
-                drawCenteredText(
-                    canvas = canvas,
-                    text = symbols.getValue(color.code),
-                    centerX = rect.centerX(),
-                    centerY = rect.centerY() - 3.2f,
-                    desiredSize = 6.3f,
-                    minSize = 4f,
-                    maxWidth = cellSize - 1.5f,
-                    color = textColor,
-                    paint = paint,
-                    typeface = mediumTypeface,
-                )
-                drawCenteredText(
-                    canvas = canvas,
-                    text = color.code,
-                    centerX = rect.centerX(),
-                    centerY = rect.centerY() + 4f,
-                    desiredSize = 5.1f,
-                    minSize = 3.2f,
-                    maxWidth = cellSize - 1.2f,
-                    color = textColor,
-                    paint = paint,
-                )
+                val scale = min(1f, cellSize / DEFAULT_PDF_CELL_SIZE)
+                when {
+                    showSymbols && showColorCodes -> {
+                        drawCenteredText(
+                            canvas = canvas,
+                            text = symbols.getValue(color.code),
+                            centerX = rect.centerX(),
+                            centerY = rect.centerY() - 3.2f * scale,
+                            desiredSize = 6.3f * scale,
+                            minSize = 4f * scale,
+                            maxWidth = cellSize - 1.5f * scale,
+                            color = textColor,
+                            paint = paint,
+                            typeface = mediumTypeface,
+                        )
+                        drawCenteredText(
+                            canvas = canvas,
+                            text = color.code,
+                            centerX = rect.centerX(),
+                            centerY = rect.centerY() + 4f * scale,
+                            desiredSize = 5.1f * scale,
+                            minSize = 3.2f * scale,
+                            maxWidth = cellSize - 1.2f * scale,
+                            color = textColor,
+                            paint = paint,
+                        )
+                    }
+
+                    showSymbols -> drawCenteredText(
+                        canvas = canvas,
+                        text = symbols.getValue(color.code),
+                        centerX = rect.centerX(),
+                        centerY = rect.centerY(),
+                        desiredSize = min(8f, cellSize * 0.48f),
+                        minSize = min(4f, cellSize * 0.28f),
+                        maxWidth = cellSize - 1.2f * scale,
+                        color = textColor,
+                        paint = paint,
+                        typeface = mediumTypeface,
+                    )
+
+                    showColorCodes -> drawCenteredText(
+                        canvas = canvas,
+                        text = color.code,
+                        centerX = rect.centerX(),
+                        centerY = rect.centerY(),
+                        desiredSize = min(6.5f, cellSize * 0.4f),
+                        minSize = min(3.2f, cellSize * 0.22f),
+                        maxWidth = cellSize - 1.2f * scale,
+                        color = textColor,
+                        paint = paint,
+                    )
+                }
             }
         }
     }
@@ -647,6 +755,7 @@ object PatternExporter {
     private fun drawPdfCoordinates(
         canvas: Canvas,
         project: BeadProject,
+        boardSize: Int,
         startColumn: Int,
         startRow: Int,
         gridLeft: Float,
@@ -656,7 +765,10 @@ object PatternExporter {
         cellSize: Float,
         paint: Paint,
     ) {
-        for (localColumn in 0 until BOARD_SIZE) {
+        val scale = min(1f, cellSize / DEFAULT_PDF_CELL_SIZE)
+        val labelSize = 6.5f * scale
+        val minimumLabelSize = 4.5f * scale
+        for (localColumn in 0 until boardSize) {
             val column = startColumn + localColumn
             if (column >= project.grid.width) continue
             val centerX = gridLeft + (localColumn + 0.5f) * cellSize
@@ -666,8 +778,8 @@ object PatternExporter {
                 label,
                 centerX,
                 gridTop - 9f,
-                6.5f,
-                4.5f,
+                labelSize,
+                minimumLabelSize,
                 cellSize - 1f,
                 Color.rgb(60, 66, 72),
                 paint,
@@ -677,14 +789,14 @@ object PatternExporter {
                 label,
                 centerX,
                 gridBottom + 10f,
-                6.5f,
-                4.5f,
+                labelSize,
+                minimumLabelSize,
                 cellSize - 1f,
                 Color.rgb(60, 66, 72),
                 paint,
             )
         }
-        for (localRow in 0 until BOARD_SIZE) {
+        for (localRow in 0 until boardSize) {
             val row = startRow + localRow
             if (row >= project.grid.height) continue
             val centerY = gridTop + (localRow + 0.5f) * cellSize
@@ -694,8 +806,8 @@ object PatternExporter {
                 label,
                 gridLeft - 13f,
                 centerY,
-                6.5f,
-                4.5f,
+                labelSize,
+                minimumLabelSize,
                 22f,
                 Color.rgb(60, 66, 72),
                 paint,
@@ -705,8 +817,8 @@ object PatternExporter {
                 label,
                 gridRight + 13f,
                 centerY,
-                6.5f,
-                4.5f,
+                labelSize,
+                minimumLabelSize,
                 22f,
                 Color.rgb(60, 66, 72),
                 paint,
@@ -716,6 +828,7 @@ object PatternExporter {
 
     private fun drawBoardGridLines(
         canvas: Canvas,
+        boardSize: Int,
         startColumn: Int,
         startRow: Int,
         gridLeft: Float,
@@ -723,33 +836,33 @@ object PatternExporter {
         cellSize: Float,
         paint: Paint,
     ) {
-        val gridSize = cellSize * BOARD_SIZE
+        val gridSize = cellSize * boardSize
         paint.style = Paint.Style.STROKE
-        for (line in 0..BOARD_SIZE) {
+        for (line in 0..boardSize) {
             val x = gridLeft + line * cellSize
             val absoluteBoundary = startColumn + line
-            paint.color = if (line == 0 || line == BOARD_SIZE) {
+            paint.color = if (line == 0 || line == boardSize) {
                 Color.rgb(30, 34, 38)
             } else {
                 Color.rgb(72, 78, 84)
             }
             paint.strokeWidth = when {
-                line == 0 || line == BOARD_SIZE -> 1.45f
+                line == 0 || line == boardSize -> 1.45f
                 absoluteBoundary % 5 == 0 -> 1.15f
                 else -> 0.32f
             }
             canvas.drawLine(x, gridTop, x, gridTop + gridSize, paint)
         }
-        for (line in 0..BOARD_SIZE) {
+        for (line in 0..boardSize) {
             val y = gridTop + line * cellSize
             val absoluteBoundary = startRow + line
-            paint.color = if (line == 0 || line == BOARD_SIZE) {
+            paint.color = if (line == 0 || line == boardSize) {
                 Color.rgb(30, 34, 38)
             } else {
                 Color.rgb(72, 78, 84)
             }
             paint.strokeWidth = when {
-                line == 0 || line == BOARD_SIZE -> 1.45f
+                line == 0 || line == boardSize -> 1.45f
                 absoluteBoundary % 5 == 0 -> 1.15f
                 else -> 0.32f
             }
@@ -762,13 +875,15 @@ object PatternExporter {
         project: BeadProject,
         palette: BeadPalette,
         symbols: Map<String, String>,
+        boardSize: Int,
+        orientation: PdfPageOrientation,
         startColumn: Int,
         startRow: Int,
         paint: Paint,
     ) {
         val counts = linkedMapOf<Int, Int>()
-        val endColumn = min(startColumn + BOARD_SIZE, project.grid.width)
-        val endRow = min(startRow + BOARD_SIZE, project.grid.height)
+        val endColumn = min(startColumn + boardSize, project.grid.width)
+        val endRow = min(startRow + boardSize, project.grid.height)
         for (row in startRow until endRow) {
             for (column in startColumn until endColumn) {
                 val colorIndex = project.grid[column, row]
@@ -778,27 +893,43 @@ object PatternExporter {
             }
         }
         val items = counts.toList().sortedBy { palette.colors[it.first].code }
+        val isLandscape = orientation == PdfPageOrientation.LANDSCAPE
+        val legendLeft = if (isLandscape) 514f else 42f
+        val titleBaseline = if (isLandscape) 105f else 663f
+        val firstRowTop = if (isLandscape) 116f else 677f
+        val columnCount = if (isLandscape) 2 else 4
+        val columnWidth = if (isLandscape) 143f else 128f
+        val rowHeight = if (isLandscape) 18f else 19f
+        val maximumRows = if (isLandscape) 12 else 6
+        val maxItems = columnCount * maximumRows
         drawText(
             canvas,
             "Board materials (${items.sumOf { it.second }} beads)",
-            42f,
-            663f,
+            legendLeft,
+            titleBaseline,
             11f,
             Color.rgb(35, 40, 45),
             paint,
             mediumTypeface,
         )
         if (items.isEmpty()) {
-            drawText(canvas, "No filled cells on this board.", 42f, 686f, 9f, Color.GRAY, paint)
+            drawText(
+                canvas,
+                "No filled cells on this board.",
+                legendLeft,
+                titleBaseline + 23f,
+                9f,
+                Color.GRAY,
+                paint,
+            )
             return
         }
 
-        val maxItems = 24
         items.take(maxItems).forEachIndexed { index, (colorIndex, count) ->
-            val column = index % 4
-            val row = index / 4
-            val x = 42f + column * 128f
-            val top = 677f + row * 19f
+            val column = index % columnCount
+            val row = index / columnCount
+            val x = legendLeft + column * columnWidth
+            val top = firstRowTop + row * rowHeight
             val color = palette.colors[colorIndex]
             paint.style = Paint.Style.FILL
             paint.color = color.opaqueArgb
@@ -815,15 +946,15 @@ object PatternExporter {
                 7.5f,
                 Color.rgb(48, 53, 58),
                 paint,
-                maxWidth = 106f,
+                maxWidth = columnWidth - 22f,
             )
         }
         if (items.size > maxItems) {
             drawText(
                 canvas,
                 "+${items.size - maxItems} more colors; see the material legend.",
-                42f,
-                798f,
+                legendLeft,
+                firstRowTop + maximumRows * rowHeight + 7f,
                 8f,
                 Color.GRAY,
                 paint,
@@ -1192,16 +1323,69 @@ object PatternExporter {
         drawText(canvas, value, x, baseline + 5f, 12f, Color.rgb(33, 38, 43), paint, mediumTypeface, width)
     }
 
-    private fun drawPageFooter(canvas: Canvas, pageNumber: Int, totalPages: Int, paint: Paint) {
+    private fun drawCalibrationMark(
+        canvas: Canvas,
+        paint: Paint,
+        right: Float,
+        y: Float,
+    ) {
+        val markLength = CALIBRATION_MARK_MILLIMETERS * POINTS_PER_MILLIMETER
+        val left = right - markLength
+        val center = (left + right) / 2f
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.8f
+        paint.color = Color.rgb(62, 68, 74)
+        canvas.drawLine(left, y, right, y, paint)
+        canvas.drawLine(left, y - 4f, left, y + 4f, paint)
+        canvas.drawLine(center, y - 2.5f, center, y + 2.5f, paint)
+        canvas.drawLine(right, y - 4f, right, y + 4f, paint)
+        drawText(
+            canvas = canvas,
+            text = "$CALIBRATION_MARK_MILLIMETERS mm calibration",
+            x = center,
+            baseline = y + 12f,
+            size = 7f,
+            color = Color.rgb(62, 68, 74),
+            paint = paint,
+            textAlign = Paint.Align.CENTER,
+        )
+    }
+
+    private fun boardAnnotationDescription(showSymbols: Boolean, showColorCodes: Boolean): String =
+        when {
+            showSymbols && showColorCodes ->
+                "Bold guides follow absolute 5-cell boundaries. Each filled cell shows symbol and color code."
+
+            showSymbols ->
+                "Bold guides follow absolute 5-cell boundaries. Each filled cell shows its symbol."
+
+            showColorCodes ->
+                "Bold guides follow absolute 5-cell boundaries. Each filled cell shows its color code."
+
+            else ->
+                "Bold guides follow absolute 5-cell boundaries. Filled cells are color-only."
+        }
+
+    private fun drawPageFooter(
+        canvas: Canvas,
+        pageNumber: Int,
+        totalPages: Int,
+        paint: Paint,
+        pageWidth: Int = PDF_WIDTH,
+        pageHeight: Int = PDF_HEIGHT,
+    ) {
+        val right = pageWidth - 42f
+        val lineY = pageHeight - 28f
+        val textBaseline = pageHeight - 11f
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 0.5f
         paint.color = Color.rgb(205, 209, 212)
-        canvas.drawLine(42f, 814f, 553f, 814f, paint)
+        canvas.drawLine(42f, lineY, right, lineY, paint)
         drawText(
             canvas,
             "豆格图纸导出",
             42f,
-            831f,
+            textBaseline,
             7.5f,
             Color.rgb(115, 120, 125),
             paint,
@@ -1209,8 +1393,8 @@ object PatternExporter {
         drawText(
             canvas,
             "第 $pageNumber / $totalPages 页",
-            553f,
-            831f,
+            right,
+            textBaseline,
             7.5f,
             Color.rgb(115, 120, 125),
             paint,
@@ -1407,8 +1591,88 @@ object PatternExporter {
         return if (remaining == 0) 0 else (remaining + continuationCapacity - 1) / continuationCapacity
     }
 
-    private fun pageInfo(pageNumber: Int): PdfDocument.PageInfo =
-        PdfDocument.PageInfo.Builder(PDF_WIDTH, PDF_HEIGHT, pageNumber).create()
+    private fun createPdfExportPlan(
+        project: BeadProject,
+        options: PdfExportOptions,
+        materialCount: Int,
+    ): PdfExportPlan {
+        require(options.bagSize > 0) { "Bag size must be positive" }
+        require(materialCount >= 0) { "Material count must not be negative" }
+        val boardSize = options.boardSize ?: project.boardSize
+        require(boardSize in BeadProject.MIN_BOARD_SIZE..BeadProject.MAX_BOARD_SIZE) {
+            "Board size must be in ${BeadProject.MIN_BOARD_SIZE}..${BeadProject.MAX_BOARD_SIZE}"
+        }
+        val boardColumns = (project.grid.width + boardSize - 1) / boardSize
+        val boardRows = (project.grid.height + boardSize - 1) / boardSize
+        val boardPageCount = boardColumns * boardRows
+        val continuationMaterialPages = pageCountAfterFirst(
+            itemCount = materialCount,
+            firstPageCapacity = COVER_MATERIAL_CAPACITY,
+            continuationCapacity = MATERIAL_PAGE_CAPACITY,
+        )
+        val materialPageCount = 1 + continuationMaterialPages
+        val physicalCellSizeMm = options.physicalCellSizeMm
+        require(
+            physicalCellSizeMm == null ||
+                (physicalCellSizeMm.isFinite() && physicalCellSizeMm > 0f),
+        ) {
+            "Physical cell size must be a positive finite millimeter value"
+        }
+        val maximumGridSize = when (options.orientation) {
+            PdfPageOrientation.PORTRAIT -> DEFAULT_PDF_GRID_SIZE
+            PdfPageOrientation.LANDSCAPE -> LANDSCAPE_PDF_GRID_SIZE
+        }
+        val cellSizePoints = physicalCellSizeMm
+            ?.let { it * POINTS_PER_MILLIMETER }
+            ?: (maximumGridSize / boardSize)
+        val gridSizePoints = cellSizePoints * boardSize
+        require(gridSizePoints <= maximumGridSize + 0.001f) {
+            "A $boardSize x $boardSize board at $physicalCellSizeMm mm per cell does not fit " +
+                "an A4 ${options.orientation.name.lowercase()} board page"
+        }
+        val boardPageWidth = when (options.orientation) {
+            PdfPageOrientation.PORTRAIT -> PDF_WIDTH
+            PdfPageOrientation.LANDSCAPE -> PDF_HEIGHT
+        }
+        val boardPageHeight = when (options.orientation) {
+            PdfPageOrientation.PORTRAIT -> PDF_HEIGHT
+            PdfPageOrientation.LANDSCAPE -> PDF_WIDTH
+        }
+        val gridLeft = when (options.orientation) {
+            PdfPageOrientation.PORTRAIT -> (boardPageWidth - gridSizePoints) / 2f
+            PdfPageOrientation.LANDSCAPE ->
+                LANDSCAPE_GRID_AREA_LEFT + (LANDSCAPE_PDF_GRID_SIZE - gridSizePoints) / 2f
+        }
+        val gridTop = when (options.orientation) {
+            PdfPageOrientation.PORTRAIT -> 118f
+            PdfPageOrientation.LANDSCAPE ->
+                LANDSCAPE_GRID_AREA_TOP + (LANDSCAPE_PDF_GRID_SIZE - gridSizePoints) / 2f
+        }
+        return PdfExportPlan(
+            boardSize = boardSize,
+            boardColumns = boardColumns,
+            boardRows = boardRows,
+            boardPageCount = boardPageCount,
+            materialPageCount = materialPageCount,
+            pageCount = materialPageCount + boardPageCount,
+            cellSizePoints = cellSizePoints,
+            orientation = options.orientation,
+            physicalCellSizeMm = physicalCellSizeMm,
+            boardPageWidthPoints = boardPageWidth,
+            boardPageHeightPoints = boardPageHeight,
+            gridLeftPoints = gridLeft,
+            gridTopPoints = gridTop,
+            showSymbols = options.showSymbols,
+            showColorCodes = options.showColorCodes,
+            showCalibrationMark = options.showCalibrationMark,
+        )
+    }
+
+    private fun pageInfo(
+        pageNumber: Int,
+        width: Int = PDF_WIDTH,
+        height: Int = PDF_HEIGHT,
+    ): PdfDocument.PageInfo = PdfDocument.PageInfo.Builder(width, height, pageNumber).create()
 
     private data class PngLayout(
         val width: Int,

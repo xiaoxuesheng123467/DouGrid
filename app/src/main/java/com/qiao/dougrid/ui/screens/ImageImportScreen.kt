@@ -1,4 +1,7 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 
 package com.qiao.dougrid.ui.screens
 
@@ -11,18 +14,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -75,6 +82,7 @@ import com.qiao.dougrid.DouGridViewModel
 import com.qiao.dougrid.core.BeadPalette
 import com.qiao.dougrid.core.ConversionMode
 import com.qiao.dougrid.core.CropRegion
+import com.qiao.dougrid.core.InventoryMode
 import com.qiao.dougrid.core.PatternGrid
 import com.qiao.dougrid.image.BitmapPatternConverter
 import com.qiao.dougrid.image.ImageImportOptions
@@ -165,7 +173,7 @@ fun ImageImportScreen(
     var dither by rememberSaveable { mutableFloatStateOf(0f) }
     var cleanup by rememberSaveable { mutableIntStateOf(1) }
     var removeBackground by rememberSaveable { mutableStateOf(false) }
-    var inventoryOnly by rememberSaveable { mutableStateOf(false) }
+    var inventoryModeName by rememberSaveable { mutableStateOf("OFF") }
     var brightness by rememberSaveable { mutableFloatStateOf(0f) }
     var contrast by rememberSaveable { mutableFloatStateOf(1f) }
     var saturation by rememberSaveable { mutableFloatStateOf(1f) }
@@ -188,7 +196,10 @@ fun ImageImportScreen(
     val inventoryColorCount = state.inventory.count { it.paletteId == paletteId && it.onHand > 0 }
     val inventoryEntries = state.inventory.filter { it.paletteId == paletteId && it.onHand > 0 }
     val targetPalette = viewModel.palette(paletteId)
+    val inventoryMode = inventoryModeName.takeUnless { it == "OFF" }?.let(InventoryMode::valueOf)
     val previewMode = ImportPreviewMode.valueOf(previewModeName)
+    val dimensionsValid = widthText.toIntOrNull()?.let { it in 8..256 } == true &&
+        heightText.toIntOrNull()?.let { it in 8..256 } == true
     val cropRegion = CropRegion(cropLeft, cropTop, cropRight, cropBottom).normalized()
     val updateCropRegion: (CropRegion) -> Unit = { updated ->
         val safe = updated.normalized()
@@ -214,7 +225,7 @@ fun ImageImportScreen(
         contrast = contrast,
         saturation = saturation,
         cropRegion = cropRegion,
-        useInventoryOnly = inventoryOnly,
+        inventoryMode = inventoryMode,
         photoSamplingMode = samplingMode,
         edgeStrength = edgeStrength,
     )
@@ -278,9 +289,9 @@ fun ImageImportScreen(
         patternPreviewError = null
         try {
             delay(220)
-            val allowed = if (inventoryOnly) viewModel.inventoryPaletteIndices(paletteId) else null
-            if (inventoryOnly && (allowed == null || allowed.size < 2)) {
-                error("豆仓里至少要有两种当前色卡的颜色")
+            val capacities = inventoryMode?.let { viewModel.inventoryPaletteCapacities(paletteId) }
+            if (capacities != null && capacities.sumOf { it.toLong() } == 0L) {
+                error("豆仓里还没有当前色卡的库存")
             }
             val lease = owner.acquire() ?: return@LaunchedEffect
             lease.use {
@@ -288,7 +299,7 @@ fun ImageImportScreen(
                     source = lease.value,
                     palette = targetPalette,
                     options = options,
-                    allowedPaletteIndices = allowed,
+                    paletteCapacities = capacities,
                 )
                 if (patternPreviewGeneration.get() == generation && previewOwner === owner) {
                     patternPreview = converted
@@ -323,26 +334,28 @@ fun ImageImportScreen(
             )
         },
         bottomBar = {
-            Button(
-                onClick = {
-                    viewModel.importImage(
-                        uri = uri,
-                        title = title,
-                        paletteId = paletteId,
-                        options = options,
-                    )
-                },
-                enabled = !state.isProcessingImage && !isPreviewing && patternPreview != null && width in 8..256 && height in 8..256,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-            ) {
-                if (state.isProcessingImage) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(10.dp))
-                    Text("正在生成")
-                } else {
-                    Icon(Icons.Default.AutoFixHigh, contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("生成图纸")
+            Box(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                Button(
+                    onClick = {
+                        viewModel.importImage(
+                            uri = uri,
+                            title = title,
+                            paletteId = paletteId,
+                            options = options,
+                        )
+                    },
+                    enabled = !state.isProcessingImage && !isPreviewing && patternPreview != null && dimensionsValid,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    if (state.isProcessingImage) {
+                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.size(10.dp))
+                        Text("正在生成")
+                    } else {
+                        Icon(Icons.Default.AutoFixHigh, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text("生成图纸")
+                    }
                 }
             }
         },
@@ -362,13 +375,14 @@ fun ImageImportScreen(
                         onPreviewMode = { previewModeName = it.name },
                         width = width,
                         height = height,
+                        boardSize = state.settings.defaultBoardSize,
                         cropRegion = cropRegion,
                         onCropRegion = updateCropRegion,
                         onResetCrop = resetCrop,
                         modifier = Modifier.weight(0.46f).fillMaxSize().padding(16.dp),
                     )
                     ImportControls(
-                        modifier = Modifier.weight(0.54f).fillMaxSize(),
+                        modifier = Modifier.weight(0.54f).fillMaxSize().verticalScroll(rememberScrollState()),
                         title = title,
                         onTitle = { title = it },
                         mode = mode,
@@ -379,7 +393,7 @@ fun ImageImportScreen(
                         heightText = heightText,
                         onDimensions = { w, h, wt, ht -> width = w; height = h; widthText = wt; heightText = ht },
                         paletteId = paletteId,
-                        onPalette = { paletteId = it; inventoryOnly = false },
+                        onPalette = { paletteId = it; inventoryModeName = "OFF" },
                         maxColors = maxColors,
                         onMaxColors = { maxColors = it },
                         dither = dither,
@@ -391,8 +405,8 @@ fun ImageImportScreen(
                         onCleanup = { cleanup = it },
                         removeBackground = removeBackground,
                         onRemoveBackground = { removeBackground = it },
-                        inventoryOnly = inventoryOnly,
-                        onInventoryOnly = { inventoryOnly = it },
+                        inventoryMode = inventoryMode,
+                        onInventoryMode = { inventoryModeName = it?.name ?: "OFF" },
                         inventoryColorCount = inventoryColorCount,
                         brightness = brightness,
                         contrast = contrast,
@@ -423,6 +437,7 @@ fun ImageImportScreen(
                             onPreviewMode = { previewModeName = it.name },
                             width = width,
                             height = height,
+                            boardSize = state.settings.defaultBoardSize,
                             cropRegion = cropRegion,
                             onCropRegion = updateCropRegion,
                             onResetCrop = resetCrop,
@@ -442,7 +457,7 @@ fun ImageImportScreen(
                             heightText = heightText,
                             onDimensions = { w, h, wt, ht -> width = w; height = h; widthText = wt; heightText = ht },
                             paletteId = paletteId,
-                            onPalette = { paletteId = it; inventoryOnly = false },
+                            onPalette = { paletteId = it; inventoryModeName = "OFF" },
                             maxColors = maxColors,
                             onMaxColors = { maxColors = it },
                             dither = dither,
@@ -454,8 +469,8 @@ fun ImageImportScreen(
                             onCleanup = { cleanup = it },
                             removeBackground = removeBackground,
                             onRemoveBackground = { removeBackground = it },
-                            inventoryOnly = inventoryOnly,
-                            onInventoryOnly = { inventoryOnly = it },
+                            inventoryMode = inventoryMode,
+                            onInventoryMode = { inventoryModeName = it?.name ?: "OFF" },
                             inventoryColorCount = inventoryColorCount,
                             brightness = brightness,
                             contrast = contrast,
@@ -490,6 +505,7 @@ private fun ImportPreview(
     onPreviewMode: (ImportPreviewMode) -> Unit,
     width: Int,
     height: Int,
+    boardSize: Int,
     cropRegion: CropRegion,
     onCropRegion: (CropRegion) -> Unit,
     onResetCrop: () -> Unit,
@@ -557,6 +573,7 @@ private fun ImportPreview(
                         palette = palette,
                         revision = patternPreview.hashCode().toLong(),
                         modifier = Modifier.fillMaxSize(),
+                        boardSize = boardSize,
                     )
                     patternPreviewError != null -> Text(
                         patternPreviewError,
@@ -664,8 +681,8 @@ private fun ImportControls(
     onCleanup: (Int) -> Unit,
     removeBackground: Boolean,
     onRemoveBackground: (Boolean) -> Unit,
-    inventoryOnly: Boolean,
-    onInventoryOnly: (Boolean) -> Unit,
+    inventoryMode: InventoryMode?,
+    onInventoryMode: (InventoryMode?) -> Unit,
     inventoryColorCount: Int,
     brightness: Float,
     contrast: Float,
@@ -686,7 +703,7 @@ private fun ImportControls(
     Column(modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
         OutlinedTextField(
             value = title,
-            onValueChange = onTitle,
+            onValueChange = { onTitle(it.take(512)) },
             label = { Text("作品名称") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
@@ -698,15 +715,15 @@ private fun ImportControls(
         LabeledRow("尺寸预设") {
             listOf(29, 58, 87).forEach { size ->
                 FilterChip(
-                    selected = width == size && height == size,
+                    selected = widthText == size.toString() && heightText == size.toString(),
                     onClick = { onDimensions(size, size, size.toString(), size.toString()) },
                     label = { Text("$size") },
                 )
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DimensionField("宽", widthText, width, height, true, onDimensions, modifier = Modifier.weight(1f))
-            DimensionField("高", heightText, width, height, false, onDimensions, modifier = Modifier.weight(1f))
+            DimensionField("宽", widthText, heightText, width, height, true, onDimensions, modifier = Modifier.weight(1f))
+            DimensionField("高", heightText, widthText, width, height, false, onDimensions, modifier = Modifier.weight(1f))
         }
         Box {
             OutlinedButton(onClick = { paletteMenu = true }, modifier = Modifier.fillMaxWidth()) {
@@ -751,12 +768,25 @@ private fun ImportControls(
             }
         }
         ToggleRow("去除浅色背景", removeBackground, onRemoveBackground)
-        ToggleRow(
-            label = "仅用豆仓颜色 · $inventoryColorCount 色",
-            checked = inventoryOnly,
-            onChecked = onInventoryOnly,
-            enabled = inventoryColorCount >= 2,
-        )
+        LabeledRow("库存策略 · $inventoryColorCount 色") {
+            FilterChip(
+                selected = inventoryMode == null,
+                onClick = { onInventoryMode(null) },
+                label = { Text("不限") },
+            )
+            FilterChip(
+                selected = inventoryMode == InventoryMode.BEST_EFFORT,
+                onClick = { onInventoryMode(InventoryMode.BEST_EFFORT) },
+                label = { Text("优先") },
+                enabled = inventoryColorCount > 0,
+            )
+            FilterChip(
+                selected = inventoryMode == InventoryMode.STRICT,
+                onClick = { onInventoryMode(InventoryMode.STRICT) },
+                label = { Text("严格") },
+                enabled = inventoryColorCount > 0,
+            )
+        }
         HorizontalDivider()
         OutlinedButton(onClick = onAdvanced, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Tune, contentDescription = null)
@@ -778,6 +808,7 @@ private fun ImportControls(
 private fun DimensionField(
     label: String,
     text: String,
+    otherText: String,
     width: Int,
     height: Int,
     isWidth: Boolean,
@@ -789,8 +820,8 @@ private fun DimensionField(
         onValueChange = { raw ->
             val filtered = raw.filter(Char::isDigit).take(3)
             val number = filtered.toIntOrNull() ?: if (isWidth) width else height
-            if (isWidth) onDimensions(number, height, filtered, height.toString())
-            else onDimensions(width, number, width.toString(), filtered)
+            if (isWidth) onDimensions(number, height, filtered, otherText)
+            else onDimensions(width, number, otherText, filtered)
         },
         label = { Text(label) },
         singleLine = true,
@@ -799,10 +830,14 @@ private fun DimensionField(
 }
 
 @Composable
-private fun LabeledRow(label: String, content: @Composable RowScope.() -> Unit) {
+private fun LabeledRow(label: String, content: @Composable FlowRowScope.() -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            content = content,
+        )
     }
 }
 

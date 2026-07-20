@@ -1,6 +1,7 @@
 package com.qiao.dougrid.export
 
 import com.qiao.dougrid.core.BeadPalette
+import com.qiao.dougrid.core.ColorMath
 import com.qiao.dougrid.core.PaletteColor
 import com.qiao.dougrid.data.BeadProject
 import com.qiao.dougrid.data.InventoryEntry
@@ -15,6 +16,16 @@ data class PlannedMaterial(
     val shortage: Int,
     val bagSize: Int,
     val bagsToBuy: Int,
+)
+
+data class MaterialSubstitution(
+    val sourceColorIndex: Int,
+    val source: PaletteColor,
+    val replacementColorIndex: Int,
+    val replacement: PaletteColor,
+    val beadCount: Int,
+    val replacementSurplus: Int,
+    val perceptualDistance: Double,
 )
 
 object MaterialPlanner {
@@ -72,6 +83,62 @@ object MaterialPlanner {
                 }
             }
         }
+    }
+
+    /**
+     * Suggests whole-color replacements that the current inventory can fully cover. Keeping the
+     * replacement atomic avoids producing an unpredictable mix of two colors in one visual area.
+     */
+    fun substitutionSuggestions(
+        project: BeadProject,
+        palette: BeadPalette,
+        inventory: List<InventoryEntry>,
+        maxSuggestionsPerColor: Int = 3,
+    ): Map<Int, List<MaterialSubstitution>> {
+        require(maxSuggestionsPerColor > 0)
+        val plan = plan(project, palette, inventory)
+        val byIndex = plan.associateBy(PlannedMaterial::colorIndex)
+        val stockByCode = inventory
+            .asSequence()
+            .filter { it.paletteId == project.paletteId }
+            .associateBy(InventoryEntry::colorCode)
+        val labs = Array(palette.colors.size) { ColorMath.toOklab(palette.colors[it].opaqueArgb) }
+
+        return plan
+            .asSequence()
+            .filter { it.shortage > 0 && it.needed > 0 }
+            .mapNotNull { source ->
+                val candidates = palette.colors.indices
+                    .asSequence()
+                    .filter { it != source.colorIndex }
+                    .mapNotNull { replacementIndex ->
+                        val replacement = palette.colors[replacementIndex]
+                        val alreadyNeeded = byIndex[replacementIndex]?.needed ?: 0
+                        val onHand = stockByCode[replacement.code]?.onHand ?: 0
+                        val surplus = (onHand - alreadyNeeded).coerceAtLeast(0)
+                        if (surplus < source.needed) return@mapNotNull null
+                        MaterialSubstitution(
+                            sourceColorIndex = source.colorIndex,
+                            source = source.color,
+                            replacementColorIndex = replacementIndex,
+                            replacement = replacement,
+                            beadCount = source.needed,
+                            replacementSurplus = surplus,
+                            perceptualDistance = kotlin.math.sqrt(
+                                labs[source.colorIndex].distanceSquared(labs[replacementIndex]),
+                            ),
+                        )
+                    }
+                    .sortedWith(
+                        compareBy<MaterialSubstitution>(MaterialSubstitution::perceptualDistance)
+                            .thenBy { it.replacement.code },
+                    )
+                    .take(maxSuggestionsPerColor)
+                    .toList()
+                candidates.takeIf(List<MaterialSubstitution>::isNotEmpty)
+                    ?.let { source.colorIndex to it }
+            }
+            .toMap()
     }
 
     private fun singleLine(value: String): String = value.replace(Regex("[\\r\\n\\t]+"), " ").trim()

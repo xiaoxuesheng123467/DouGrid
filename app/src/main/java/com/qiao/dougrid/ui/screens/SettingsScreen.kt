@@ -1,12 +1,14 @@
-@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@file:OptIn(
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+)
 
 package com.qiao.dougrid.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -89,6 +91,25 @@ fun SettingsScreen(
             }
             item { SettingsToggle("显示格内色号", state.settings.showColorCodes) { checked -> viewModel.updateSettings { it.copy(showColorCodes = checked) } } }
             item { SettingsToggle("高对比网格", state.settings.highContrastGrid) { checked -> viewModel.updateSettings { it.copy(highContrastGrid = checked) } } }
+            item { SettingsSectionTitle("默认实体板") }
+            item {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    listOf(29, 30, 32).forEach { size ->
+                        FilterChip(
+                            selected = state.settings.defaultBoardSize == size,
+                            onClick = { viewModel.updateSettings { it.copy(defaultBoardSize = size) } },
+                            label = { Text("$size × $size") },
+                        )
+                    }
+                    if (state.settings.defaultBoardSize !in listOf(29, 30, 32)) {
+                        FilterChip(
+                            selected = true,
+                            onClick = {},
+                            label = { Text("${state.settings.defaultBoardSize} × ${state.settings.defaultBoardSize}") },
+                        )
+                    }
+                }
+            }
             item { SettingsSectionTitle("默认色卡") }
             item {
                 androidx.compose.foundation.layout.Box {
@@ -114,6 +135,21 @@ fun SettingsScreen(
             item { SettingsSectionTitle("开拼") }
             item { SettingsToggle("制作时保持亮屏", state.settings.keepScreenOnInCraftMode) { checked -> viewModel.updateSettings { it.copy(keepScreenOnInCraftMode = checked) } } }
             item { SettingsToggle("扣减库存前确认", state.settings.confirmInventoryDeduction) { checked -> viewModel.updateSettings { it.copy(confirmInventoryDeduction = checked) } } }
+            item { SettingsSectionTitle("低库存提醒") }
+            item {
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(0 to "关闭", 100 to "≤ 100", 300 to "≤ 300", 500 to "≤ 500").forEach { (threshold, label) ->
+                        FilterChip(
+                            selected = state.settings.lowStockThreshold == threshold,
+                            onClick = { viewModel.updateSettings { it.copy(lowStockThreshold = threshold) } },
+                            label = { Text(label) },
+                        )
+                    }
+                }
+            }
             item { SettingsSectionTitle("数据") }
             item {
                 SettingsActionRow(
@@ -130,7 +166,7 @@ fun SettingsScreen(
                     icon = Icons.Default.ColorLens,
                     title = "色卡数据来源",
                     detail = "pindou-color-data · MIT",
-                    onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/HansBug/pindou-color-data"))) },
+                    onClick = { showLicense = true },
                 )
             }
             item {
