@@ -9,7 +9,7 @@
 - [GitHub Releases](https://github.com/xiaoxuesheng123467/DouGrid/releases/latest)
 - [产品详情与 APK 下载](https://shuogewudi.pages.dev/dougrid-app)
 
-当前版本为 `1.3.0`，支持 Android 8.0 及以上。App 不申请网络权限，图片识别、备份和数据交换全程离线完成，项目、参考图和库存数据只保存在设备本机。
+当前版本为 `2.0.0`，支持 Android 8.0 及以上。由于旧版签名密钥已经无法找回，2.0.0 使用新的签名，不能覆盖安装旧版本；请先导出项目、卸载旧版，再安装新包。App 不申请网络权限，图片识别、备份和数据交换全程离线完成，项目、参考图和库存数据只保存在设备本机。
 
 ## 界面
 
@@ -53,6 +53,8 @@
 ```
 
 Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
+
+本地正式包需要一个未提交的 `keystore.properties` 和对应 keystore。签名材料不在本公开仓库中；不要将 keystore、密码或 `keystore.properties` 提交到这里。
 
 ## 产品参考
 

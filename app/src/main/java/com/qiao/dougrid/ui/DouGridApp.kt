@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.GridView
@@ -21,8 +23,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -37,6 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -260,13 +265,28 @@ private val navItems = listOf(
 
 @Composable
 private fun MainNavigationBar(selected: MainDestination, onSelected: (MainDestination) -> Unit) {
-    NavigationBar {
+    NavigationBar(
+        modifier = Modifier
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .navigationBarsPadding()
+            .clip(RoundedCornerShape(22.dp)),
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 4.dp,
+        windowInsets = WindowInsets(0, 0, 0, 0),
+    ) {
         navItems.forEach { item ->
             NavigationBarItem(
                 selected = selected == item.destination,
                 onClick = { onSelected(item.destination) },
                 icon = { DestinationIcon(item.destination) },
                 label = { Text(item.label) },
+                colors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             )
         }
     }
@@ -274,13 +294,23 @@ private fun MainNavigationBar(selected: MainDestination, onSelected: (MainDestin
 
 @Composable
 private fun MainNavigationRail(selected: MainDestination, onSelected: (MainDestination) -> Unit) {
-    NavigationRail {
+    NavigationRail(
+        modifier = Modifier.padding(vertical = 12.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
         navItems.forEach { item ->
             NavigationRailItem(
                 selected = selected == item.destination,
                 onClick = { onSelected(item.destination) },
                 icon = { DestinationIcon(item.destination) },
                 label = { Text(item.label) },
+                colors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    selectedTextColor = MaterialTheme.colorScheme.onSurface,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
             )
         }
     }
