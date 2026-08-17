@@ -165,7 +165,7 @@ object InventoryCsvCodec {
                 InventoryCsvIssue(
                     line = rows.first().line,
                     code = InventoryCsvIssueCode.INVALID_HEADER,
-                    message = "CSV header does not match the DouGrid inventory format",
+                    message = "CSV header does not match the QiaoGrid inventory format",
                 ),
             )
         }

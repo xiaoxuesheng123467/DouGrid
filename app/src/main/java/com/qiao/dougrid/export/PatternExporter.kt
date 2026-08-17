@@ -1383,7 +1383,7 @@ object PatternExporter {
         canvas.drawLine(42f, lineY, right, lineY, paint)
         drawText(
             canvas,
-            "豆格图纸导出",
+            "乔格图纸导出",
             42f,
             textBaseline,
             7.5f,

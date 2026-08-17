@@ -249,7 +249,7 @@ fun LibraryScreen(
             ),
             title = {
                 Column {
-                    Text("豆格", style = MaterialTheme.typography.titleLarge)
+                    Text("乔格", style = MaterialTheme.typography.titleLarge)
                     Text("${state.projects.size} 个作品", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
@@ -1032,6 +1032,6 @@ private fun projectArchiveFileName(title: String): String {
         .joinToString("")
         .trim('.', ' ')
         .take(80)
-        .ifBlank { "豆格作品" }
+        .ifBlank { "乔格作品" }
     return "$base.${DouGridArchiveCodec.FILE_EXTENSION}"
 }

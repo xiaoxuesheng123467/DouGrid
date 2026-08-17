@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DouGrid.Base" parent="@android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.QiaoGrid.Base" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionModeOverlay">true</item>
@@ -12,9 +12,9 @@
         <item name="android:windowDisablePreview">false</item>
     </style>
 
-    <style name="Theme.DouGrid" parent="Theme.DouGrid.Base" />
+    <style name="Theme.QiaoGrid" parent="Theme.QiaoGrid.Base" />
 
-    <style name="Theme.DouGrid.Starting" parent="Theme.DouGrid">
+    <style name="Theme.QiaoGrid.Starting" parent="Theme.QiaoGrid">
         <item name="android:windowBackground">@drawable/launch_screen</item>
     </style>
 </resources>

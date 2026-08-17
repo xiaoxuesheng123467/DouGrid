@@ -112,7 +112,7 @@ fun DouGridApp(viewModel: DouGridViewModel, state: DouGridUiState) {
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
                         CircularProgressIndicator()
-                        Text("豆格", style = MaterialTheme.typography.titleLarge)
+                        Text("乔格", style = MaterialTheme.typography.titleLarge)
                     }
                 } else {
                     NavHost(navController = navController, startDestination = Routes.Main) {
