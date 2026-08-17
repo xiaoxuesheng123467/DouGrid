@@ -738,64 +738,65 @@ private fun ImportControls(
                 }
             }
         }
-        ValueSlider("最多颜色", maxColors.toString(), maxColors.toFloat(), 4f..96f, 91, { onMaxColors(it.toInt()) })
-        if (mode == ConversionMode.PHOTO) {
-            LabeledRow("照片采样") {
-                FilterChip(
-                    selected = samplingMode == PhotoSamplingMode.AVERAGE,
-                    onClick = { onSamplingMode(PhotoSamplingMode.AVERAGE) },
-                    label = { Text("自然") },
-                )
-                FilterChip(
-                    selected = samplingMode == PhotoSamplingMode.DOMINANT,
-                    onClick = { onSamplingMode(PhotoSamplingMode.DOMINANT) },
-                    label = { Text("插画") },
-                )
-            }
-            ValueSlider("抖动强度", "${(dither * 100).toInt()}%", dither, 0f..1f, 20, onDither)
-            if (samplingMode == PhotoSamplingMode.AVERAGE) {
-                ValueSlider("边缘保留", "${(edgeStrength * 100).toInt()}%", edgeStrength, 0f..1f, 20, onEdgeStrength)
-            }
-        }
-        LabeledRow("去杂点") {
-            (0..3).forEach { value ->
-                FilterChip(
-                    selected = cleanup == value,
-                    onClick = { onCleanup(value) },
-                    label = { Text(if (value == 0) "关" else value.toString()) },
-                    enabled = dither <= 0f || value == 0,
-                )
-            }
-        }
-        ToggleRow("去除浅色背景", removeBackground, onRemoveBackground)
-        LabeledRow("库存策略 · $inventoryColorCount 色") {
-            FilterChip(
-                selected = inventoryMode == null,
-                onClick = { onInventoryMode(null) },
-                label = { Text("不限") },
-            )
-            FilterChip(
-                selected = inventoryMode == InventoryMode.BEST_EFFORT,
-                onClick = { onInventoryMode(InventoryMode.BEST_EFFORT) },
-                label = { Text("优先") },
-                enabled = inventoryColorCount > 0,
-            )
-            FilterChip(
-                selected = inventoryMode == InventoryMode.STRICT,
-                onClick = { onInventoryMode(InventoryMode.STRICT) },
-                label = { Text("严格") },
-                enabled = inventoryColorCount > 0,
-            )
-        }
         HorizontalDivider()
         OutlinedButton(onClick = onAdvanced, modifier = Modifier.fillMaxWidth()) {
             Icon(Icons.Default.Tune, contentDescription = null)
             Spacer(Modifier.size(8.dp))
-            Text("图像调整")
+            Text(if (advanced) "收起转换设置" else "更多转换设置")
             Spacer(Modifier.weight(1f))
             Icon(if (advanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore, contentDescription = null)
         }
         if (advanced) {
+            ValueSlider("最多颜色", maxColors.toString(), maxColors.toFloat(), 4f..96f, 91, { onMaxColors(it.toInt()) })
+            if (mode == ConversionMode.PHOTO) {
+                LabeledRow("照片采样") {
+                    FilterChip(
+                        selected = samplingMode == PhotoSamplingMode.AVERAGE,
+                        onClick = { onSamplingMode(PhotoSamplingMode.AVERAGE) },
+                        label = { Text("自然") },
+                    )
+                    FilterChip(
+                        selected = samplingMode == PhotoSamplingMode.DOMINANT,
+                        onClick = { onSamplingMode(PhotoSamplingMode.DOMINANT) },
+                        label = { Text("插画") },
+                    )
+                }
+                ValueSlider("抖动强度", "${(dither * 100).toInt()}%", dither, 0f..1f, 20, onDither)
+                if (samplingMode == PhotoSamplingMode.AVERAGE) {
+                    ValueSlider("边缘保留", "${(edgeStrength * 100).toInt()}%", edgeStrength, 0f..1f, 20, onEdgeStrength)
+                }
+            }
+            LabeledRow("去杂点") {
+                (0..3).forEach { value ->
+                    FilterChip(
+                        selected = cleanup == value,
+                        onClick = { onCleanup(value) },
+                        label = { Text(if (value == 0) "关" else value.toString()) },
+                        enabled = dither <= 0f || value == 0,
+                    )
+                }
+            }
+            ToggleRow("去除浅色背景", removeBackground, onRemoveBackground)
+            LabeledRow("库存策略 · $inventoryColorCount 色") {
+                FilterChip(
+                    selected = inventoryMode == null,
+                    onClick = { onInventoryMode(null) },
+                    label = { Text("不限") },
+                )
+                FilterChip(
+                    selected = inventoryMode == InventoryMode.BEST_EFFORT,
+                    onClick = { onInventoryMode(InventoryMode.BEST_EFFORT) },
+                    label = { Text("优先") },
+                    enabled = inventoryColorCount > 0,
+                )
+                FilterChip(
+                    selected = inventoryMode == InventoryMode.STRICT,
+                    onClick = { onInventoryMode(InventoryMode.STRICT) },
+                    label = { Text("严格") },
+                    enabled = inventoryColorCount > 0,
+                )
+            }
+            HorizontalDivider()
             ValueSlider("亮度", String.format(Locale.US, "%+.2f", brightness), brightness, -0.35f..0.35f, 28, onBrightness)
             ValueSlider("对比度", String.format(Locale.US, "%.2f", contrast), contrast, 0.55f..1.55f, 20, onContrast)
             ValueSlider("饱和度", String.format(Locale.US, "%.2f", saturation), saturation, 0f..1.8f, 18, onSaturation)

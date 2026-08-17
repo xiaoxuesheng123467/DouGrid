@@ -385,6 +385,13 @@ fun PatternThumbnail(
     )
 }
 
+internal fun patternCellAlpha(completed: Boolean, highlighted: Boolean): Float = when {
+    completed && highlighted -> 0.18f
+    completed -> 0.04f
+    !highlighted -> 0.06f
+    else -> 1f
+}
+
 @Suppress("UNUSED_PARAMETER")
 private fun DrawScope.drawPattern(
     grid: PatternGrid,
@@ -438,11 +445,7 @@ private fun DrawScope.drawPattern(
             val paletteColor = palette.colors.getOrNull(colorIndex) ?: continue
             val completed = grid.completed[index].toInt() != 0
             val highlighted = highlightColorIndex == null || highlightColorIndex == colorIndex
-            val alpha = when {
-                completed -> 0.24f
-                !highlighted -> 0.12f
-                else -> 1f
-            }
+            val alpha = patternCellAlpha(completed = completed, highlighted = highlighted)
             val topLeft = Offset(origin.x + localColumn * cell, origin.y + localRow * cell)
             val color = Color(paletteColor.opaqueArgb).copy(alpha = alpha)
             if (beadStyle) {

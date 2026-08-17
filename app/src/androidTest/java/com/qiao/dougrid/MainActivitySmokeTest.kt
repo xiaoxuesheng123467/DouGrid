@@ -7,7 +7,9 @@ import androidx.compose.ui.test.click
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -57,7 +59,7 @@ class MainActivitySmokeTest {
         composeRule.onNodeWithText("去豆仓补货").performClick()
 
         composeRule.onNodeWithText("搜索色号、名称或色系").assertIsDisplayed()
-        composeRule.onNodeWithText("郁金香杯垫").assertIsDisplayed()
+        composeRule.onAllNodesWithText("郁金香杯垫").onFirst().assertIsDisplayed()
     }
 
     @Test
@@ -100,9 +102,19 @@ class MainActivitySmokeTest {
         closeTutorialIfPresent()
         composeRule.waitUntilAtLeastOneExists(hasText("郁金香杯垫"), timeoutMillis = 10_000)
         composeRule.onNode(hasText("郁金香杯垫") and hasText("待开拼")).performClick()
+        composeRule.waitUntilAtLeastOneExists(
+            hasText("更多") or hasContentDescription("打开编辑工具"),
+            timeoutMillis = 10_000,
+        )
+        if (composeRule.onAllNodesWithContentDescription("打开编辑工具").fetchSemanticsNodes().isNotEmpty()) {
+            composeRule.onNodeWithContentDescription("打开编辑工具").performClick()
+            composeRule.waitUntilAtLeastOneExists(hasText("更多"), timeoutMillis = 10_000)
+        }
+        composeRule.onNodeWithText("更多").performClick()
         composeRule.waitUntilAtLeastOneExists(hasContentDescription("框选"), timeoutMillis = 10_000)
 
         composeRule.onNodeWithContentDescription("框选").performClick()
+        composeRule.onNodeWithText("收起").performClick()
         composeRule.onNodeWithContentDescription("框选").assertIsDisplayed()
     }
 

@@ -96,6 +96,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -122,6 +124,19 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 
 private enum class EditorExportKind { PDF, PIXEL_PNG, GRID_PNG }
+
+internal val primaryEditorTools = listOf(
+    EditorTool.PENCIL,
+    EditorTool.ERASER,
+    EditorTool.FILL,
+    EditorTool.PAN,
+)
+
+internal val advancedEditorTools = listOf(
+    EditorTool.PICKER,
+    EditorTool.REPLACE,
+    EditorTool.SELECT,
+)
 
 @Composable
 fun EditorScreen(
@@ -688,13 +703,22 @@ private fun EditorCompactToolbar(
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            item { CompactToolButton(EditorTool.PENCIL, selectedTool, Icons.Default.Edit, "画笔", onSelectTool) }
-            item { CompactToolButton(EditorTool.ERASER, selectedTool, Icons.AutoMirrored.Filled.Backspace, "橡皮", onSelectTool) }
-            item { CompactToolButton(EditorTool.FILL, selectedTool, Icons.Default.FormatColorFill, "填充", onSelectTool) }
-            item { CompactToolButton(EditorTool.PICKER, selectedTool, Icons.Default.Colorize, "吸色", onSelectTool) }
-            item { CompactToolButton(EditorTool.REPLACE, selectedTool, Icons.Default.FindReplace, "替换", onSelectTool) }
-            item { CompactToolButton(EditorTool.SELECT, selectedTool, Icons.Default.CropFree, "框选", onSelectTool) }
-            item { CompactToolButton(EditorTool.PAN, selectedTool, Icons.Default.PanTool, "移动", onSelectTool) }
+            primaryEditorTools.forEach { tool ->
+                item(key = tool.name) {
+                    CompactToolButton(tool, selectedTool, editorToolIcon(tool), editorToolLabel(tool), onSelectTool)
+                }
+            }
+            if (selectedTool in advancedEditorTools) {
+                item(key = "active-advanced") {
+                    CompactToolButton(
+                        selectedTool,
+                        selectedTool,
+                        editorToolIcon(selectedTool),
+                        editorToolLabel(selectedTool),
+                        onSelectTool,
+                    )
+                }
+            }
         }
         IconButton(onClick = onOpenTools, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Default.Palette, contentDescription = "打开编辑工具")
@@ -735,6 +759,7 @@ private fun EditorControls(
     viewModel: DouGridViewModel,
     modifier: Modifier,
 ) {
+    var showAdvancedTools by rememberSaveable(project.id) { mutableStateOf(false) }
     Column(
         modifier = modifier.background(MaterialTheme.colorScheme.surface).padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -743,13 +768,45 @@ private fun EditorControls(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { ToolButton(EditorTool.PENCIL, state.editorTool, Icons.Default.Edit, "画笔", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.ERASER, state.editorTool, Icons.AutoMirrored.Filled.Backspace, "橡皮", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.FILL, state.editorTool, Icons.Default.FormatColorFill, "填充", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.PICKER, state.editorTool, Icons.Default.Colorize, "吸色", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.REPLACE, state.editorTool, Icons.Default.FindReplace, "替换", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.SELECT, state.editorTool, Icons.Default.CropFree, "框选", viewModel::setEditorTool) }
-            item { ToolButton(EditorTool.PAN, state.editorTool, Icons.Default.PanTool, "移动", viewModel::setEditorTool) }
+            primaryEditorTools.forEach { tool ->
+                item(key = tool.name) {
+                    ToolButton(tool, state.editorTool, editorToolIcon(tool), editorToolLabel(tool), viewModel::setEditorTool)
+                }
+            }
+            if (!showAdvancedTools && state.editorTool in advancedEditorTools) {
+                item(key = "active-advanced") {
+                    ToolButton(
+                        state.editorTool,
+                        state.editorTool,
+                        editorToolIcon(state.editorTool),
+                        editorToolLabel(state.editorTool),
+                        viewModel::setEditorTool,
+                    )
+                }
+            }
+            item(key = "advanced") {
+                TextButton(
+                    onClick = { showAdvancedTools = !showAdvancedTools },
+                    modifier = Modifier.semantics {
+                        stateDescription = if (showAdvancedTools) "更多工具已展开" else "更多工具已收起"
+                    },
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = null)
+                    Text(if (showAdvancedTools) "收起" else "更多")
+                }
+            }
+        }
+        if (showAdvancedTools) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                advancedEditorTools.forEach { tool ->
+                    item(key = tool.name) {
+                        ToolButton(tool, state.editorTool, editorToolIcon(tool), editorToolLabel(tool), viewModel::setEditorTool)
+                    }
+                }
+            }
         }
         state.editorSelection?.let { region ->
             SelectionControls(
@@ -875,6 +932,26 @@ private fun ToolButton(
         }
         Text(label, style = MaterialTheme.typography.labelSmall)
     }
+}
+
+private fun editorToolLabel(tool: EditorTool): String = when (tool) {
+    EditorTool.PENCIL -> "画笔"
+    EditorTool.ERASER -> "橡皮"
+    EditorTool.FILL -> "填充"
+    EditorTool.PICKER -> "吸色"
+    EditorTool.REPLACE -> "替换"
+    EditorTool.SELECT -> "框选"
+    EditorTool.PAN -> "移动"
+}
+
+private fun editorToolIcon(tool: EditorTool) = when (tool) {
+    EditorTool.PENCIL -> Icons.Default.Edit
+    EditorTool.ERASER -> Icons.AutoMirrored.Filled.Backspace
+    EditorTool.FILL -> Icons.Default.FormatColorFill
+    EditorTool.PICKER -> Icons.Default.Colorize
+    EditorTool.REPLACE -> Icons.Default.FindReplace
+    EditorTool.SELECT -> Icons.Default.CropFree
+    EditorTool.PAN -> Icons.Default.PanTool
 }
 
 @Composable
