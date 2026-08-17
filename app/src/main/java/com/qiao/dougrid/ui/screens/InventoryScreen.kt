@@ -194,7 +194,7 @@ fun InventoryScreen(state: DouGridUiState, viewModel: DouGridViewModel) {
                             leadingIcon = { Icon(Icons.Default.FileDownload, contentDescription = null) },
                             onClick = {
                                 inventoryMenu = false
-                                exportCsvLauncher.launch("豆格-豆仓.csv")
+                                exportCsvLauncher.launch("乔格-豆仓.csv")
                             },
                         )
                     }

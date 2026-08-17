@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DouGrid.Starting" parent="Theme.DouGrid">
+    <style name="Theme.QiaoGrid.Starting" parent="Theme.QiaoGrid">
         <item name="android:windowBackground">@color/dougrid_surface</item>
         <item name="android:windowSplashScreenBackground">@color/dougrid_surface</item>
         <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>

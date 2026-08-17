@@ -181,7 +181,7 @@ fun SettingsScreen(
             item {
                 SettingsActionRow(
                     icon = Icons.Default.Info,
-                    title = "豆格 ${BuildConfig.VERSION_NAME}",
+                    title = "乔格 ${BuildConfig.VERSION_NAME}",
                     detail = "从灵感到成品的拼豆工作台",
                     onClick = { showLicense = true },
                 )
@@ -209,7 +209,7 @@ fun SettingsScreen(
             title = { Text("色卡说明") },
             text = {
                 LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                    item { Text("品牌名称仅用于说明色卡兼容性，豆格与相关品牌无官方关联。", style = MaterialTheme.typography.bodyMedium) }
+                    item { Text("品牌名称仅用于说明色卡兼容性，乔格与相关品牌无官方关联。", style = MaterialTheme.typography.bodyMedium) }
                     item { Spacer(Modifier.size(12.dp)) }
                     item { Text(license, style = MaterialTheme.typography.bodySmall) }
                 }

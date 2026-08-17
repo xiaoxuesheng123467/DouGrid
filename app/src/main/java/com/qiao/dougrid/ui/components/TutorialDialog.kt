@@ -53,7 +53,7 @@ private val tutorialPages = listOf(
     TutorialPage(
         icon = Icons.Default.PhotoLibrary,
         title = "导入一张图片",
-        body = "从首页点“导入图片”选择本机文件，或直接拍照。豆格会读取原图方向并生成实时预览。",
+        body = "从首页点“导入图片”选择本机文件，或直接拍照。乔格会读取原图方向并生成实时预览。",
         tips = listOf("支持常见照片格式", "图片只在本机处理"),
     ),
     TutorialPage(
@@ -101,7 +101,7 @@ fun TutorialDialog(onFinish: () -> Unit) {
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("豆格使用教程", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        Text("乔格使用教程", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         IconButton(onClick = onFinish) { Icon(Icons.Default.Close, contentDescription = "关闭教程") }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

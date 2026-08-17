@@ -2,7 +2,7 @@
 
 ## HansBug/pindou-color-data
 
-DouGrid includes color-reference data from
+QiaoGrid includes color-reference data from
 [`HansBug/pindou-color-data`](https://github.com/HansBug/pindou-color-data),
 revision `178dafbc9e77d3de556550dbd058270200129186` (data generated 2026-05-19).
 

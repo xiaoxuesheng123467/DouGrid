@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "DouGrid"
+rootProject.name = "QiaoGrid"
 include(":app", ":core")

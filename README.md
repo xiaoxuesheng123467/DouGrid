@@ -1,44 +1,44 @@
 <p align="center">
-  <img src="docs/assets/dougrid-hero.svg" width="960" alt="豆格 DouGrid：把照片变成可编辑、可跟做的拼豆图纸">
+  <img src="docs/assets/qiaogrid-hero.svg" width="960" alt="乔格 QiaoGrid：把照片变成可编辑、可跟做的拼豆图纸">
 </p>
 
-<h1 align="center">豆格 DouGrid</h1>
+<h1 align="center">乔格 QiaoGrid</h1>
 
 <p align="center">
   <strong>从图片转换到分板跟做，把完整拼豆流程装进一台 Android 设备。</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/xiaoxuesheng123467/DouGrid/actions/workflows/android.yml"><img alt="Android CI" src="https://github.com/xiaoxuesheng123467/DouGrid/actions/workflows/android.yml/badge.svg"></a>
-  <a href="https://github.com/xiaoxuesheng123467/DouGrid/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/xiaoxuesheng123467/DouGrid?style=flat-square&color=765548"></a>
+  <a href="https://github.com/xiaoxuesheng123467/QiaoGrid/actions/workflows/android.yml"><img alt="Android CI" src="https://github.com/xiaoxuesheng123467/QiaoGrid/actions/workflows/android.yml/badge.svg"></a>
+  <a href="https://github.com/xiaoxuesheng123467/QiaoGrid/releases/latest"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/xiaoxuesheng123467/QiaoGrid?style=flat-square&color=765548"></a>
   <img alt="Android 8.0+" src="https://img.shields.io/badge/Android-8.0%2B-169F94?style=flat-square&logo=android&logoColor=white">
   <img alt="完全离线" src="https://img.shields.io/badge/隐私-完全离线-666248?style=flat-square">
-  <a href="https://github.com/xiaoxuesheng123467/DouGrid/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/xiaoxuesheng123467/DouGrid?style=flat-square&logo=github&color=F2C94C"></a>
+  <a href="https://github.com/xiaoxuesheng123467/QiaoGrid/stargazers"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/xiaoxuesheng123467/QiaoGrid?style=flat-square&logo=github&color=F2C94C"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/xiaoxuesheng123467/DouGrid/releases/latest"><strong>下载 APK</strong></a>
+  <a href="https://github.com/xiaoxuesheng123467/QiaoGrid/releases/latest"><strong>下载 APK</strong></a>
   ·
-  <a href="https://shuogewudi.pages.dev/dougrid-app"><strong>查看产品页</strong></a>
+  <a href="https://shuogewudi.pages.dev/qiaogrid-app"><strong>查看产品页</strong></a>
   ·
-  <a href="https://github.com/xiaoxuesheng123467/DouGrid"><strong>⭐ 喜欢就点个 Star</strong></a>
+  <a href="https://github.com/xiaoxuesheng123467/QiaoGrid"><strong>⭐ 喜欢就点个 Star</strong></a>
 </p>
 
-豆格是一款面向实际手工流程的 Android 拼豆工具。它不只做图片像素化，而是把图纸生成、手动修图、分板跟做、库存核对和导出放在同一个离线工作流里。
+乔格是一款面向实际手工流程的 Android 拼豆工具。它不只做图片像素化，而是把图纸生成、手动修图、分板跟做、库存核对和导出放在同一个离线工作流里。
 
 ## 下载
 
-- [GitHub Releases](https://github.com/xiaoxuesheng123467/DouGrid/releases/latest)
-- [产品详情与 APK 下载](https://shuogewudi.pages.dev/dougrid-app)
+- [GitHub Releases](https://github.com/xiaoxuesheng123467/QiaoGrid/releases/latest)
+- [产品详情与 APK 下载](https://shuogewudi.pages.dev/qiaogrid-app)
 
-当前版本为 `2.0.1`，支持 Android 8.0 及以上。由于 2.0.0 以前的旧版签名密钥已经无法找回，1.x 不能直接覆盖安装 2.x；请先导出项目、卸载旧版，再安装新包。App 不申请网络权限，图片识别、备份和数据交换全程离线完成，项目、参考图和库存数据只保存在设备本机。
+当前版本为 `2.0.2`，支持 Android 8.0 及以上。`2.0.2` 将产品品牌从“豆格 DouGrid”更名为“乔格 QiaoGrid”，Android 包名和 `.dougrid` 项目格式保持不变，因此已安装 2.x 的用户可以直接升级，原有项目也可继续使用。由于 2.0.0 以前的旧版签名密钥已经无法找回，1.x 仍不能直接覆盖安装 2.x；请先导出项目、卸载旧版，再安装新包。App 不申请网络权限，图片识别、备份和数据交换全程离线完成，项目、参考图和库存数据只保存在设备本机。
 
 ## 界面
 
 <p align="center">
-  <img src="docs/screenshots/library.webp" width="260" alt="豆格作品库与灵感模板">
-  <img src="docs/screenshots/editor.webp" width="260" alt="豆格拼豆图纸编辑器">
-  <img src="docs/screenshots/craft.webp" width="260" alt="豆格分板跟做与进度记录">
+  <img src="docs/screenshots/library.png" width="260" alt="乔格作品库与灵感模板">
+  <img src="docs/screenshots/editor.webp" width="260" alt="乔格拼豆图纸编辑器">
+  <img src="docs/screenshots/craft.webp" width="260" alt="乔格分板跟做与进度记录">
 </p>
 
 ## 已实现
@@ -87,9 +87,9 @@ Debug APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。
 - [Pixel-Beads](https://www.pixel-beads.net/)：颜色数限制、品牌匹配和可打印 PDF
 - [Beadify](https://beadify.app/)：库存限制转换、豆数统计和实体板打印导向
 
-## 喜欢豆格？
+## 喜欢乔格？
 
-如果豆格让你的拼豆流程更轻松，欢迎点一下仓库右上角的 [⭐ Star](https://github.com/xiaoxuesheng123467/DouGrid)。你的支持会让我继续改进图片转换、图纸编辑和分板跟做体验。
+如果乔格让你的拼豆流程更轻松，欢迎点一下仓库右上角的 [⭐ Star](https://github.com/xiaoxuesheng123467/QiaoGrid)。你的支持会让我继续改进图片转换、图纸编辑和分板跟做体验。
 
 ## 色卡数据
 
