@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360" role="img" aria-labelledby="title desc">
+  <title id="title">豆格 DouGrid 动态拼豆图案</title>
+  <desc id="desc">暖色背景上的拼豆网格依次亮起，组成豆格标志和一颗星星。</desc>
+  <defs>
+    <linearGradient id="background" x1="80" y1="20" x2="880" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFDF9"/>
+      <stop offset="0.52" stop-color="#F7F4EF"/>
+      <stop offset="1" stop-color="#EFE7DE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(296 180) rotate(90) scale(154)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F0E1DA" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#F0E1DA" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="scanGradient" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#FFF" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#FFF" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#FFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="softShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#60463C" flood-opacity="0.13"/>
+    </filter>
+    <filter id="beadShadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#36241E" flood-opacity="0.2"/>
+    </filter>
+    <clipPath id="boardClip">
+      <rect x="123" y="43" width="314" height="274" rx="30"/>
+    </clipPath>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      .grid-line { stroke: #D5CCC6; stroke-width: 1; opacity: 0.52; }
+      .bead {
+        transform-box: fill-box;
+        transform-origin: center;
+        animation: bead-pop 4.8s cubic-bezier(.22, .9, .3, 1) infinite;
+      }
+      .delay-1 { animation-delay: -.32s; }
+      .delay-2 { animation-delay: -.64s; }
+      .delay-3 { animation-delay: -.96s; }
+      .delay-4 { animation-delay: -1.28s; }
+      .delay-5 { animation-delay: -1.6s; }
+      .delay-6 { animation-delay: -1.92s; }
+      .delay-7 { animation-delay: -2.24s; }
+      .delay-8 { animation-delay: -2.56s; }
+      .delay-9 { animation-delay: -2.88s; }
+      .scan { animation: scan 4.8s ease-in-out infinite; }
+      .spark { transform-box: fill-box; transform-origin: center; animation: sparkle 2.4s ease-in-out infinite; }
+      .spark-2 { animation-delay: -1.2s; }
+      .float { animation: float 5.2s ease-in-out infinite; }
+      .pulse { transform-box: fill-box; transform-origin: center; animation: pulse 3s ease-in-out infinite; }
+      @keyframes bead-pop {
+        0%, 14%, 100% { transform: scale(.72); opacity: .42; }
+        24%, 70% { transform: scale(1); opacity: 1; }
+        82% { transform: scale(.92); opacity: .82; }
+      }
+      @keyframes scan {
+        0%, 10% { transform: translateX(-180px); opacity: 0; }
+        24% { opacity: .7; }
+        62% { opacity: .45; }
+        74%, 100% { transform: translateX(390px); opacity: 0; }
+      }
+      @keyframes sparkle {
+        0%, 100% { transform: scale(.72) rotate(-8deg); opacity: .35; }
+        50% { transform: scale(1.08) rotate(8deg); opacity: 1; }
+      }
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-7px); }
+      }
+      @keyframes pulse {
+        0%, 100% { transform: scale(.96); opacity: .72; }
+        50% { transform: scale(1.06); opacity: 1; }
+      }
+      @media (prefers-color-scheme: dark) {
+        .surface { fill: #221E1B; }
+        .background { fill: #1A1715; }
+        .board { fill: #2B2522; stroke: #4B433E; }
+        .grid-line { stroke: #4B433E; opacity: .72; }
+        .title { fill: #F0E1DA; }
+        .subtitle { fill: #D0C5BE; }
+        .pill { fill: #34301F; stroke: #4B4932; }
+        .pill-text { fill: #E9E5CA; }
+        .eyebrow { fill: #DDC394; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bead, .scan, .spark, .float, .pulse { animation: none; }
+        .bead { opacity: 1; transform: none; }
+        .scan { opacity: 0; }
+      }
+    </style>
+  </defs>
+
+  <rect class="background" width="960" height="360" rx="34" fill="url(#background)"/>
+  <circle cx="296" cy="180" r="154" fill="url(#glow)"/>
+  <circle class="pulse" cx="858" cy="68" r="42" fill="#F2E3C3" opacity="0.72"/>
+  <circle cx="887" cy="294" r="70" fill="#E9E5CA" opacity="0.5"/>
+  <circle cx="74" cy="310" r="48" fill="#F0E1DA" opacity="0.62"/>
+
+  <g class="float" filter="url(#softShadow)">
+    <rect class="board" x="123" y="43" width="314" height="274" rx="30" fill="#FFFCF8" stroke="#D5CCC6" stroke-width="2"/>
+    <g clip-path="url(#boardClip)">
+      <g>
+        <path class="grid-line" d="M157 43V317M191 43V317M225 43V317M259 43V317M293 43V317M327 43V317M361 43V317M395 43V317"/>
+        <path class="grid-line" d="M123 77H437M123 111H437M123 145H437M123 179H437M123 213H437M123 247H437M123 281H437"/>
+      </g>
+      <rect class="scan" x="72" y="43" width="116" height="274" fill="url(#scanGradient)" opacity="0"/>
+    </g>
+
+    <g filter="url(#beadShadow)">
+      <g fill="#765548">
+        <circle class="bead delay-1" cx="191" cy="94" r="12"/>
+        <circle class="bead delay-2" cx="225" cy="94" r="12"/>
+        <circle class="bead delay-3" cx="259" cy="94" r="12"/>
+        <circle class="bead delay-2" cx="191" cy="128" r="12"/>
+        <circle class="bead delay-4" cx="293" cy="128" r="12"/>
+        <circle class="bead delay-3" cx="191" cy="162" r="12"/>
+        <circle class="bead delay-5" cx="293" cy="162" r="12"/>
+        <circle class="bead delay-4" cx="191" cy="196" r="12"/>
+        <circle class="bead delay-6" cx="293" cy="196" r="12"/>
+        <circle class="bead delay-5" cx="191" cy="230" r="12"/>
+        <circle class="bead delay-6" cx="225" cy="230" r="12"/>
+        <circle class="bead delay-7" cx="259" cy="230" r="12"/>
+      </g>
+      <g fill="#169F94">
+        <circle class="bead delay-4" cx="225" cy="128" r="12"/>
+        <circle class="bead delay-5" cx="259" cy="128" r="12"/>
+        <circle class="bead delay-6" cx="225" cy="162" r="12"/>
+        <circle class="bead delay-7" cx="259" cy="162" r="12"/>
+        <circle class="bead delay-8" cx="225" cy="196" r="12"/>
+        <circle class="bead delay-9" cx="259" cy="196" r="12"/>
+      </g>
+      <g fill="#F2C94C">
+        <circle class="bead delay-1" cx="344" cy="111" r="11"/>
+        <circle class="bead delay-2" cx="327" cy="145" r="11"/>
+        <circle class="bead delay-3" cx="361" cy="145" r="11"/>
+        <circle class="bead delay-4" cx="310" cy="179" r="11"/>
+        <circle class="bead delay-5" cx="344" cy="179" r="11"/>
+        <circle class="bead delay-6" cx="378" cy="179" r="11"/>
+        <circle class="bead delay-7" cx="327" cy="213" r="11"/>
+        <circle class="bead delay-8" cx="361" cy="213" r="11"/>
+        <circle class="bead delay-9" cx="344" cy="247" r="11"/>
+      </g>
+      <circle class="bead delay-7" cx="259" cy="162" r="4.5" fill="#FFFDF9" opacity="0.9"/>
+    </g>
+  </g>
+
+  <g>
+    <text class="eyebrow" x="480" y="105" fill="#7A6240" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="14" font-weight="700" letter-spacing="2">OFFLINE PERLER BEAD STUDIO</text>
+    <text class="title" x="476" y="177" fill="#2E1710" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="64" font-weight="800" letter-spacing="1">豆格</text>
+    <text class="title" x="630" y="177" fill="#765548" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="40" font-weight="720">DouGrid</text>
+    <text class="subtitle" x="480" y="220" fill="#5E5651" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="19" font-weight="500">把照片变成可编辑、可跟做的拼豆图纸</text>
+    <g transform="translate(480 250)">
+      <rect class="pill" width="104" height="40" rx="20" fill="#F0E1DA" stroke="#DECBC2"/>
+      <circle cx="22" cy="20" r="6" fill="#169F94"/>
+      <text class="pill-text" x="37" y="26" fill="#5D3E33" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">Android</text>
+    </g>
+    <g transform="translate(596 250)">
+      <rect class="pill" width="96" height="40" rx="20" fill="#E9E5CA" stroke="#D7D1AD"/>
+      <path d="M22 13.5l2.1 4.25 4.7.68-3.4 3.31.8 4.68L22 24.2l-4.2 2.22.8-4.68-3.4-3.31 4.7-.68L22 13.5z" fill="#7A6240"/>
+      <text class="pill-text" x="37" y="26" fill="#4B4932" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">离线</text>
+    </g>
+    <g transform="translate(704 250)">
+      <rect class="pill" width="108" height="40" rx="20" fill="#F2E3C3" stroke="#E1CFA9"/>
+      <path d="M22 14v12M16 20h12" stroke="#7A6240" stroke-width="2.4" stroke-linecap="round"/>
+      <text class="pill-text" x="39" y="26" fill="#584724" font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="15" font-weight="700">可编辑</text>
+    </g>
+  </g>
+
+  <g class="spark" fill="#F2C94C">
+    <path d="M889 102l3.4 8.6 8.6 3.4-8.6 3.4-3.4 8.6-3.4-8.6-8.6-3.4 8.6-3.4 3.4-8.6z"/>
+  </g>
+  <g class="spark spark-2" fill="#E4BBAA">
+    <path d="M466 63l2.4 6.1 6.1 2.4-6.1 2.4-2.4 6.1-2.4-6.1-6.1-2.4 6.1-2.4 2.4-6.1z"/>
+  </g>
+</svg>
